@@ -5,24 +5,29 @@
  * doesn't do much -- it is just intended to get you started.
  */
 
-
+#include <usloss.h>
+#include <usyscall.h>
 #include <assert.h>
 #include <phase1.h>
 #include <phase2.h>
 #include <phase3.h>
 #include <phase4.h>
 #include <phase5.h>
-#include <usyscall.h>
 #include <libuser.h>
 #include <vm.h>
 #include <string.h>
 
-extern void mbox_create(sysargs *args_ptr);
-extern void mbox_release(sysargs *args_ptr);
-extern void mbox_send(sysargs *args_ptr);
-extern void mbox_receive(sysargs *args_ptr);
-extern void mbox_condsend(sysargs *args_ptr);
-extern void mbox_condreceive(sysargs *args_ptr);
+extern void mbox_create(USLOSS_Sysargs *args_ptr);
+extern void mbox_release(USLOSS_Sysargs *args_ptr);
+extern void mbox_send(USLOSS_Sysargs *args_ptr);
+extern void mbox_receive(USLOSS_Sysargs *args_ptr);
+extern void mbox_condsend(USLOSS_Sysargs *args_ptr);
+extern void mbox_condreceive(USLOSS_Sysargs *args_ptr);
+
+extern int  Spawn(char *name, int (*func)(char *), char *arg, int stack_size,
+                  int priority, int *pid);
+extern int  Wait(int *pid, int *status);
+extern void Terminate(long status);
 
 static Process processes[MAXPROC];
 
@@ -33,10 +38,10 @@ FaultMsg faults[MAXPROC]; /* Note that a process can have only
 VmStats  vmStats;
 
 
-static void FaultHandler(int type, int offset);
+static void FaultHandler(int type, void * offset);
 
-static void vmInit(sysargs *sysargsPtr);
-static void vmCleanup(sysargs *sysargsPtr);
+static void vmInit(USLOSS_Sysargs *USLOSS_SysargsPtr);
+static void vmDestroy(USLOSS_Sysargs *USLOSS_SysargsPtr);
 /*
  *----------------------------------------------------------------------
  *
@@ -60,17 +65,16 @@ start4(char *arg)
     int status;
 
     /* to get user-process access to mailbox functions */
-    systemCallVec[SYS_MBOXCREATE]      = mboxCreate;
-    systemCallVec[SYS_MBOXRELEASE]     = mboxRelease;
-    systemCallVec[SYS_MBOXSEND]        = mboxSend;
-    systemCallVec[SYS_MBOXRECEIVE]     = mboxReceive;
-    systemCallVec[SYS_MBOXCONDSEND]    = mboxCondsend;
-    systemCallVec[SYS_MBOXCONDRECEIVE] = mboxCondreceive;
+    systemCallVec[SYS_MBOXCREATE]      = mbox_create;
+    systemCallVec[SYS_MBOXRELEASE]     = mbox_release;
+    systemCallVec[SYS_MBOXSEND]        = mbox_send;
+    systemCallVec[SYS_MBOXRECEIVE]     = mbox_receive;
+    systemCallVec[SYS_MBOXCONDSEND]    = mbox_condsend;
+    systemCallVec[SYS_MBOXCONDRECEIVE] = mbox_condreceive;
 
     /* user-process access to VM functions */
-    sys_vec[SYS_VMINIT]    = vmInit;
-    sys_vec[SYS_VMCLEANUP] = vmCleanup;
-
+    systemCallVec[SYS_VMINIT]    = vmInit;
+    systemCallVec[SYS_VMDESTROY] = vmDestroy; 
     result = Spawn("Start5", start5, NULL, 8*USLOSS_MIN_STACK, 2, &pid);
     if (result != 0) {
         USLOSS_Console("start4(): Error spawning start5\n");
@@ -102,7 +106,7 @@ start4(char *arg)
  *----------------------------------------------------------------------
  */
 static void
-vmInit(sysargs *sysargsPtr)
+vmInit(USLOSS_Sysargs *USLOSS_SysargsPtr)
 {
     CheckMode();
 } /* vmInit */
@@ -111,9 +115,9 @@ vmInit(sysargs *sysargsPtr)
 /*
  *----------------------------------------------------------------------
  *
- * vmCleanup --
+ * vmDestroy --
  *
- * Stub for the VmCleanup system call.
+ * Stub for the VmDestroy system call.
  *
  * Results:
  *      None.
@@ -125,10 +129,10 @@ vmInit(sysargs *sysargsPtr)
  */
 
 static void
-vmCleanup(sysargs *sysargsPtr)
+vmDestroy(USLOSS_Sysargs *USLOSS_SysargsPtr)
 {
    CheckMode();
-} /* vmCleanup */
+} /* vmDestroy */
 
 
 /*
@@ -155,12 +159,12 @@ vmInitReal(int mappings, int pages, int frames, int pagers)
    int dummy;
 
    CheckMode();
-   status = MMU_Init(mappings, pages, frames);
-   if (status != MMU_OK) {
+   status = USLOSS_MmuInit(mappings, pages, frames, USLOSS_MMU_MODE_TLB);
+   if (status != USLOSS_MMU_OK) {
       USLOSS_Console("vmInitReal: couldn't initialize MMU, status %d\n", status);
       abort();
    }
-   int_vec[MMU_INT] = FaultHandler;
+   USLOSS_IntVec[USLOSS_MMU_INT] = FaultHandler;
 
    /*
     * Initialize page tables.
@@ -184,7 +188,7 @@ vmInitReal(int mappings, int pages, int frames, int pagers)
     * Initialize other vmStats fields.
     */
 
-   return MMU_Region(&dummy);
+   return USLOSS_MmuRegion(&dummy);
 } /* vmInitReal */
 
 
@@ -224,9 +228,9 @@ PrintStats(void)
 /*
  *----------------------------------------------------------------------
  *
- * vmCleanupReal --
+ * vmDestroyReal --
  *
- * Called by vmClean.
+ * Called by vmDestroy.
  * Frees all of the global data structures
  *
  * Results:
@@ -238,11 +242,15 @@ PrintStats(void)
  *----------------------------------------------------------------------
  */
 void
-vmCleanupReal(void)
+vmDestroyReal(void)
 {
 
    CheckMode();
-   USLOSS_MmuDone();
+   int mmu = USLOSS_MmuDone();
+   if (mmu != USLOSS_MMU_OK){
+    USLOSS_Console("vmDestroyReal(): USLOSS MMU error. Terminating...\n");
+    Terminate(1);
+   }
    /*
     * Kill the pagers here.
     */
@@ -252,11 +260,11 @@ vmCleanupReal(void)
    USLOSS_Console("vmStats:\n");
    USLOSS_Console("pages: %d\n", vmStats.pages);
    USLOSS_Console("frames: %d\n", vmStats.frames);
-   USLOSS_Console("blocks: %d\n", vmStats.blocks);
+   USLOSS_Console("blocks: %d\n", vmStats.diskBlocks);
    /* and so on... */
 
-} /* vmCleanupReal */
-
+} /* vmDestroyReal */
+
 /*
  *----------------------------------------------------------------------
  *
@@ -276,20 +284,20 @@ vmCleanupReal(void)
  */
 static void
 FaultHandler(int type /* MMU_INT */,
-             int arg  /* Offset within VM region */)
+             void * offset  /* Offset within VM region */)  //FIXME: not sure if void* or int?
 {
    int cause;
 
-   assert(type == MMU_INT);
-   cause = MMU_GetCause();
-   assert(cause == MMU_FAULT);
+   assert(type == USLOSS_MMU_INT);
+   cause = USLOSS_MmuGetCause();
+   assert(cause == USLOSS_MMU_FAULT);
    vmStats.faults++;
    /*
     * Fill in faults[pid % MAXPROC], send it to the pagers, and wait for the
     * reply.
     */
 } /* FaultHandler */
-
+
 
 /*
  *----------------------------------------------------------------------
