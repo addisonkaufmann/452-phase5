@@ -5,6 +5,8 @@
 #ifndef _PHASE2_H
 #define _PHASE2_H
 
+#include <usyscall.h>
+
 // Maximum line length. Used by terminal read and write.
 #define MAXLINE         80
 
