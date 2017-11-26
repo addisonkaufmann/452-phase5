@@ -13,6 +13,7 @@
  */
 #define UNUSED 500
 #define INCORE 501
+#define OCCUPIED 502
 /* You'll probably want more states */
 
 
@@ -27,11 +28,23 @@ typedef struct PTE {
 } PTE;
 
 /*
+ * Frame table entry.
+ */
+typedef struct FTE {
+    int  state;      // See above.
+    int  pid;        // Process using the frame.
+    int  page;       // Page stored in the frame.
+    int  clean;      // Specifies if the frame is clean or dirty (matches or has disparity with disk).
+} FTE;
+
+/*
  * Per-process information.
  */
 typedef struct Process {
     int  numPages;   // Size of the page table.
     PTE  *pageTable; // The page table for the process.
+    int  status;     // UNUSED or OCCUPIED
+    int  pid;
     // Add more stuff here */
 } Process;
 
