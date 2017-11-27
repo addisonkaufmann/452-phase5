@@ -19,12 +19,14 @@
 
 int debugFlag5 = 1;
 
+extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
 extern void mbox_release(USLOSS_Sysargs *args_ptr);
 extern void mbox_send(USLOSS_Sysargs *args_ptr);
 extern void mbox_receive(USLOSS_Sysargs *args_ptr);
 extern void mbox_condsend(USLOSS_Sysargs *args_ptr);
 extern void mbox_condreceive(USLOSS_Sysargs *args_ptr);
+extern int MboxCreate(int slots, int size);
 extern int semcreateReal();
 extern void sempReal();
 extern void semvReal();
@@ -54,6 +56,9 @@ int numPagers;
 int statsMutex;
 int initialized;
 
+FaultMsg* faultQueue;
+
+
 
 
 /*
@@ -77,7 +82,6 @@ int start4(char *arg)
 	int result;
 	int status;
 
-	initProcTable();
 	initialized = 0; // Have not done VmInit yet
 
 	/* to get user-process access to mailbox functions */
@@ -149,6 +153,7 @@ static void vmInit(USLOSS_Sysargs * args)
 	if (debugFlag5) {
 		USLOSS_Console("vmInit(): Returning with error of: %d and address: %d\n.", (long)args->arg4, addr);
 	}
+	initProcTable();
 	enterUserMode();
 } /* vmInit */
 
@@ -381,16 +386,57 @@ void vmDestroyReal(void)
 static void FaultHandler(int type /* MMU_INT */,
 						 void * offset  /* Offset within VM region */)  //FIXME: not sure if void* or int?
 {
+	if (debugFlag5) {
+		USLOSS_Console("FaultHandler(): called.\n");
+	}
+
 	int cause;
 
 	assert(type == USLOSS_MMU_INT);
 	cause = USLOSS_MmuGetCause();
 	assert(cause == USLOSS_MMU_FAULT);
 	vmStats.faults++;
-	 /*
-		* Fill in faults[pid % MAXPROC], send it to the pagers, and wait for the
-		* reply.
-		*/
+	
+	/*
+	* Fill in faults[pid % MAXPROC], send it to the pagers, and wait for the
+	* reply.
+	*/
+	int pid = getpid() % MAXPROC;
+	faults[pid].pid = getpid();
+	faults[pid].addr = offset;
+	faults[pid].replyMbox = procTable[pid].faultMbox;
+
+	// Add the fault to the queue
+	if (faultQueue == NULL) {
+		faultQueue = &faults[pid];
+		faultQueue->next = NULL;
+	}
+	else {
+		FaultMsg* prev = NULL;
+		FaultMsg* curr = faultQueue;
+
+		while (curr != NULL) {
+			prev = curr;
+			curr = curr->next;
+		}
+		prev->next = &faults[pid];
+		prev->next->next = NULL;
+	}
+
+	// Wake up a waiting pager
+	if (debugFlag5) {
+		USLOSS_Console("FaultHandler(): Waking up a pager.\n");
+	}
+	MboxSend(faultMbox, NULL, 0);
+
+	// Block until the fault has been handled.
+	if (debugFlag5) {
+		USLOSS_Console("FaultHandler(): blocking to wait for a pager to process the fault.\n");
+	}
+	MboxReceive(procTable[pid].faultMbox, NULL, 0);
+	if (debugFlag5) {
+		USLOSS_Console("FaultHandler(): woke up after fault has been processed by pager.");
+	}
 } /* FaultHandler */
 
 
@@ -411,7 +457,7 @@ static void FaultHandler(int type /* MMU_INT */,
  */
 static int Pager(char *buf)
 {
-		while(1) {
+		while(0) {
 				/* Wait for fault to occur (receive from mailbox) */
 				/* Look for free frame */
 				/* If there isn't one then use clock algorithm to
@@ -445,6 +491,7 @@ void initProcTable() {
         procTable[i].pageTable = NULL;
         procTable[i].numPages = -1;
         //procTable[i].semId = semcreateReal(0);
-        //procTable[i].diskMboxId = MboxCreate(0, sizeof(int));
+       	//Mbox_Create(1, 0, &procTable[i].faultMbox);
+       	procTable[i].faultMbox = MboxCreate(1,0);
     }
 }

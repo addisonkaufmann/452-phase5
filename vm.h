@@ -27,6 +27,7 @@ typedef struct PTE {
     // Add more stuff here
 } PTE;
 
+
 /*
  * Frame table entry.
  */
@@ -45,9 +46,11 @@ typedef struct Process {
     PTE  *pageTable; // The page table for the process.
     int  status;     // UNUSED or OCCUPIED
     int  pid;
+    int  faultMbox;
     // Add more stuff here */
 } Process;
 
+typedef struct FaultMsg* faultPtr;
 /*
  * Information about page faults. This message is sent by the faulting
  * process to the pager to request that the fault be handled.
@@ -56,6 +59,7 @@ typedef struct FaultMsg {
     int  pid;        // Process with the problem.
     void *addr;      // Address that caused the fault.
     int  replyMbox;  // Mailbox to send reply.
+    faultPtr next;
     // Add more stuff here.
 } FaultMsg;
 
