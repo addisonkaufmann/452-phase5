@@ -433,6 +433,10 @@ static void FaultHandler(int type /* MMU_INT */,
 		USLOSS_Console("FaultHandler(): blocking to wait for a pager to process the fault\n");
 	}
 	MboxReceive(procTable[pid].faultMbox, NULL, 0);
+
+	//which frame did I get?
+	//unlock that frame at some point
+
 	if (debugFlag5) {
 		USLOSS_Console("FaultHandler(): woke up after fault has been processed by pager\n");
 	}
@@ -469,22 +473,30 @@ static int Pager(char *buf)
 			USLOSS_Console("Pager(): woke up with fault from pid %d\n", fault->pid);
 		}
 
-		/* Find unused page */
+		/* find the frame that were gonna use (above code) */
+
 		int frameIndex = scanForFrame();
 
 		/* If there isn't one then use clock algorithm to
 		   replace a page (perhaps write to disk) */
-		/* Load page into frame from disk, if necessary */
 
 		if (frameIndex == -1){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): no frames available, have to do page replacement\n");
+				/* clock algorithm */
 			}	
 		} else {
 			if (debugFlag5){
 				USLOSS_Console("Pager(): available frame at index %d\n", frameIndex);
 			}
 		}
+		/* Load page into frame from disk, if necessary */
+
+		/* say the the pager "has" this frame, (change status to locked in frame table) */
+		/* do the mapping and copy info */
+
+		/* send "you get frame x" to waiting faulthandler, 
+			then faulthandler "unlocks" it eventually */
 
 		/* Unblock waiting (faulting) process */
 		if (debugFlag5){
