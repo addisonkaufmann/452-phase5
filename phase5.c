@@ -40,6 +40,8 @@ int enterUserMode();
 void * vmInitReal(int mappings, int pages, int frames, int pagers);
 void initProcTable();
 void vmDestroyReal(void);
+void initFrameTable();
+int scanForFrame();
 
 void * vmRegion; //FIXME: not sure what this is supposed to be
 static Process procTable[MAXPROC];
@@ -50,6 +52,7 @@ FaultMsg faults[MAXPROC]; /* Note that a process can have only
 													 * and index them by pid. */
 VmStats  vmStats;
 FTE* frameTable;
+int numFrames;
 int faultMbox;
 int * pagerPids;
 int numPagers;
@@ -153,7 +156,7 @@ static void vmInit(USLOSS_Sysargs * args)
 	if (debugFlag5) {
 		USLOSS_Console("vmInit(): Returning with error of: %d and address: %d\n.", (long)args->arg4, addr);
 	}
-	initProcTable();
+	
 	enterUserMode();
 } /* vmInit */
 
@@ -229,16 +232,13 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	}
 	USLOSS_IntVec[USLOSS_MMU_INT] = FaultHandler;
 
+	
 	/*
 	* Initialize the frame table.
 	*/
-	frameTable = malloc(sizeof(FTE) * frames);
-	for (int i = 0; i < frames; ++i) {
-		frameTable[i].state = UNUSED;
-		frameTable[i].clean = 1;
-		frameTable[i].pid = -1;
-		frameTable[i].page = -1;
-	}
+	initProcTable();
+	initFrameTable(frames);
+
 
 	/*
 	* Initialize page tables.
@@ -387,7 +387,7 @@ static void FaultHandler(int type /* MMU_INT */,
 						 void * offset  /* Offset within VM region */)  //FIXME: not sure if void* or int?
 {
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): called.\n");
+		USLOSS_Console("FaultHandler(): called by pid %d\n", getpid());
 	}
 
 	int cause;
@@ -425,17 +425,17 @@ static void FaultHandler(int type /* MMU_INT */,
 
 	// Wake up a waiting pager
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): Waking up a pager.\n");
+		USLOSS_Console("FaultHandler(): Waking up a pager\n");
 	}
 	MboxSend(faultMbox, NULL, 0);
 
 	// Block until the fault has been handled.
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): blocking to wait for a pager to process the fault.\n");
+		USLOSS_Console("FaultHandler(): blocking to wait for a pager to process the fault\n");
 	}
 	MboxReceive(procTable[pid].faultMbox, NULL, 0);
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): woke up after fault has been processed by pager.");
+		USLOSS_Console("FaultHandler(): woke up after fault has been processed by pager\n");
 	}
 } /* FaultHandler */
 
@@ -457,16 +457,54 @@ static void FaultHandler(int type /* MMU_INT */,
  */
 static int Pager(char *buf)
 {
-		while(0) {
-				/* Wait for fault to occur (receive from mailbox) */
-				/* Look for free frame */
-				/* If there isn't one then use clock algorithm to
-				 * replace a page (perhaps write to disk) */
-				/* Load page into frame from disk, if necessary */
-				/* Unblock waiting (faulting) process */
+	while(1) {
+		/* Wait for fault to occur (receive from mailbox) */
+		MboxReceive(faultMbox, NULL, 0);
+		
+		/* Pop message from faultqueue */
+		FaultMsg* fault = faultQueue;
+		faultQueue = faultQueue->next;
+		fault->next = NULL;
+
+		if (debugFlag5){
+			USLOSS_Console("Pager(): woke up with fault from pid %d\n", fault->pid);
 		}
-		return 0;
+
+		/* Find unused page */
+		int frameIndex = scanForFrame();
+
+		/* If there isn't one then use clock algorithm to
+		   replace a page (perhaps write to disk) */
+		/* Load page into frame from disk, if necessary */
+
+		if (frameIndex == -1){
+			if (debugFlag5){
+				USLOSS_Console("Pager(): no frames available, have to do page replacement\n");
+			}	
+		} else {
+			if (debugFlag5){
+				USLOSS_Console("Pager(): available frame at index %d\n", frameIndex);
+			}
+		}
+
+		/* Unblock waiting (faulting) process */
+		if (debugFlag5){
+			USLOSS_Console("Pager(): waking up pid %d\n", fault->pid);
+		}
+		MboxSend(fault->replyMbox, NULL, 0);
+	}
+	return 0;
 } /* Pager */
+
+int scanForFrame(){
+/* Look for free frame */
+	for (int i = 0; i < numFrames; i++){
+		if (frameTable[i].state == UNUSED){
+			return i;
+		}
+	}
+	return -1;
+}
 
 
 /*
@@ -494,4 +532,16 @@ void initProcTable() {
        	//Mbox_Create(1, 0, &procTable[i].faultMbox);
        	procTable[i].faultMbox = MboxCreate(1,0);
     }
+}
+
+void initFrameTable(int frames){
+	numFrames = frames;
+	//malloc frametable
+	frameTable =(FTE*) malloc(frames*sizeof(FTE));
+	for (int i = 0; i < frames; i++){
+		frameTable[i].pid = -1;
+		frameTable[i].page = -1;
+		frameTable[i].state = UNUSED;
+		frameTable[i].clean = 1;
+	}
 }
