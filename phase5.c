@@ -14,6 +14,7 @@
 #include <phase4.h>
 #include <phase5.h>
 #include <libuser.h>
+#include "providedPrototypes.h"
 #include <vm.h>
 #include <string.h>
 
@@ -28,8 +29,6 @@ extern void mbox_condsend(USLOSS_Sysargs *args_ptr);
 extern void mbox_condreceive(USLOSS_Sysargs *args_ptr);
 extern int MboxCreate(int slots, int size);
 extern int semcreateReal();
-extern void sempReal();
-extern void semvReal();
 
 static void FaultHandler(int type, void * offset);
 static void vmInit(USLOSS_Sysargs *USLOSS_SysargsPtr);
@@ -86,7 +85,7 @@ int start4(char *arg)
 	int status;
 
 	initialized = 0; // Have not done VmInit yet
-
+	
 	/* to get user-process access to mailbox functions */
 	systemCallVec[SYS_MBOXCREATE]      = mbox_create;
 	systemCallVec[SYS_MBOXRELEASE]     = mbox_release;
