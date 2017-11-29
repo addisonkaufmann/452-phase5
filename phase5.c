@@ -432,7 +432,8 @@ static void FaultHandler(int type /* MMU_INT */,
 	if (debugFlag5) {
 		USLOSS_Console("FaultHandler(): blocking to wait for a pager to process the fault\n");
 	}
-	MboxReceive(procTable[pid].faultMbox, NULL, 0);
+	int myframe;
+	MboxReceive(procTable[pid].faultMbox, &myframe, sizeof(int));
 
 	//which frame did I get?
 	//unlock that frame at some point
@@ -493,6 +494,7 @@ static int Pager(char *buf)
 		/* Load page into frame from disk, if necessary */
 
 		/* say the the pager "has" this frame, (change status to locked in frame table) */
+
 		/* do the mapping and copy info */
 
 		/* send "you get frame x" to waiting faulthandler, 
@@ -502,7 +504,7 @@ static int Pager(char *buf)
 		if (debugFlag5){
 			USLOSS_Console("Pager(): waking up pid %d\n", fault->pid);
 		}
-		MboxSend(fault->replyMbox, NULL, 0);
+		MboxSend(fault->replyMbox, &frameIndex, sizeof(int));
 	}
 	return 0;
 } /* Pager */
@@ -541,7 +543,7 @@ void initProcTable() {
         procTable[i].numPages = -1;
         //procTable[i].semId = semcreateReal(0);
        	//Mbox_Create(1, 0, &procTable[i].faultMbox);
-       	procTable[i].faultMbox = MboxCreate(1,0);
+       	procTable[i].faultMbox = MboxCreate(1,sizeof(int));
     }
 }
 
