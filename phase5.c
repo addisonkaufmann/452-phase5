@@ -280,7 +280,7 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	int track; 
 	int disk;
 
-	int diskStatus = diskSizeReal(1, &sector, &track, &disk);
+	diskSizeReal(1, &sector, &track, &disk);
 	// USLOSS_Console("%d %d %d %d\n", diskStatus, sector, track, disk);
 
 	int pageSize = USLOSS_MmuPageSize();
@@ -527,8 +527,10 @@ static int Pager(char *buf)
 			Terminate(1);
 		}
 
+		int pageNumber = ((long)fault->addr) / USLOSS_MmuPageSize();
+
 		/* do the mapping and copy info */
-		mmuStatus = USLOSS_MmuMap(tag, 0, frameIndex, USLOSS_MMU_PROT_RW );
+		mmuStatus = USLOSS_MmuMap(tag, pageNumber, frameIndex, USLOSS_MMU_PROT_RW );
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): mmu map failed\n");
