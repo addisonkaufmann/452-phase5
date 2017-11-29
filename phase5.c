@@ -151,6 +151,8 @@ static void vmInit(USLOSS_Sysargs * args)
 		args->arg1 = addr;
 		vmRegion = addr;
 		initialized = 1;
+		memset((char *) vmRegion, 0, pages * USLOSS_MmuPageSize());
+
 	}
 
 	if (debugFlag5) {
@@ -231,6 +233,8 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 		abort();
 	}
 	USLOSS_IntVec[USLOSS_MMU_INT] = FaultHandler;
+
+
 
 	
 	/*
