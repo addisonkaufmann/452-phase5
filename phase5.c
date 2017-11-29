@@ -276,14 +276,24 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	/*
 	* Initialize vmStats fields.
 	*/
+	int sector; 
+	int track; 
+	int disk;
+
+	int diskStatus = diskSizeReal(1, &sector, &track, &disk);
+	// USLOSS_Console("%d %d %d %d\n", diskStatus, sector, track, disk);
+
+	int pageSize = USLOSS_MmuPageSize();
+	// USLOSS_Console("%d\n", pageSize);
+	
 	vmStats.pages = pages;
 	vmStats.frames = frames;
-	vmStats.diskBlocks = 0; // TODO: Disk stuff
+	vmStats.diskBlocks = (sector*track*disk)/pageSize; // TODO: Disk stuff
 	vmStats.freeFrames = frames;
-	vmStats.freeDiskBlocks = 0;
+	vmStats.freeDiskBlocks = vmStats.diskBlocks;
 	vmStats.switches = 0;
 	vmStats.faults = 0;
-	vmStats.new = 1;
+	vmStats.new = 1; //FIXME: should be 0
 	vmStats.pageIns = 0;
 	vmStats.pageOuts = 0;
 	vmStats.replaced = 0;

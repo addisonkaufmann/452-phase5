@@ -15,6 +15,7 @@
 int p1debug = 0;
 
 extern Process * getProc();
+extern int initialized;
 
 
 void
@@ -40,6 +41,9 @@ p1_switch(int old, int new)
 {
     if (p1debug)
         USLOSS_Console("p1_switch() called: old = %d, new = %d\n", old, new);
+    if (initialized){
+        vmStats.switches++;
+    }
 } /* p1_switch */
 
 void
