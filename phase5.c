@@ -432,15 +432,17 @@ static void FaultHandler(int type /* MMU_INT */,
 	if (debugFlag5) {
 		USLOSS_Console("FaultHandler(): blocking to wait for a pager to process the fault\n");
 	}
+
+	//which frame did I get?
 	int myframe;
 	MboxReceive(procTable[pid].faultMbox, &myframe, sizeof(int));
 
-	//which frame did I get?
-	//unlock that frame at some point
 
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): woke up after fault has been processed by pager\n");
+		USLOSS_Console("FaultHandler(): woke up after fault, given frame #%d by pager\n", myframe);
 	}
+
+	//eventually set frame back to unused
 } /* FaultHandler */
 
 
@@ -493,17 +495,20 @@ static int Pager(char *buf)
 		}
 		/* Load page into frame from disk, if necessary */
 
-		/* say the the pager "has" this frame, (change status to locked in frame table) */
+		/* say the the pager "has" this frame, (change status in frame table) */
+		frameTable[frameIndex].state = OCCUPIED;
+		frameTable[frameIndex].pid = fault->pid;
+
 
 		/* do the mapping and copy info */
-
-		/* send "you get frame x" to waiting faulthandler, 
-			then faulthandler "unlocks" it eventually */
 
 		/* Unblock waiting (faulting) process */
 		if (debugFlag5){
 			USLOSS_Console("Pager(): waking up pid %d\n", fault->pid);
 		}
+
+		/* send "you get frame x" to waiting faulthandler, 
+			then faulthandler "unlocks" it eventually */
 		MboxSend(fault->replyMbox, &frameIndex, sizeof(int));
 	}
 	return 0;
