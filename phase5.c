@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 1;
+int debugFlag5 = 0;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -57,6 +57,7 @@ int * pagerPids;
 int numPagers;
 int statsMutex;
 int initialized;
+int destroy = 0;
 
 FaultMsg* faultQueue;
 
@@ -282,7 +283,7 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	vmStats.freeDiskBlocks = 0;
 	vmStats.switches = 0;
 	vmStats.faults = 0;
-	vmStats.new = 0;
+	vmStats.new = 1;
 	vmStats.pageIns = 0;
 	vmStats.pageOuts = 0;
 	vmStats.replaced = 0;
@@ -341,6 +342,9 @@ void PrintStats(void)
  */
 void vmDestroyReal(void)
 {
+	if (debugFlag5){
+		USLOSS_Console("vmDestroyReal(): called\n");
+	}
 
 	CheckMode();
 	int mmu = USLOSS_MmuDone();
@@ -352,6 +356,7 @@ void vmDestroyReal(void)
 	/*
 	* Kill the pagers here.
 	*/
+	destroy = 1;
 	for (int i = 0; i < numPagers; ++i) {
 		MboxSend(faultMbox, NULL, 0);
 		zap(pagerPids[i]);
@@ -467,8 +472,12 @@ static int Pager(char *buf)
 		/* Wait for fault to occur (receive from mailbox) */
 		MboxReceive(faultMbox, NULL, 0);
 		
+
 		/* Pop message from faultqueue */
 		FaultMsg* fault = faultQueue;
+		if (fault == NULL){
+			quit(1);
+		}
 		faultQueue = faultQueue->next;
 		fault->next = NULL;
 
@@ -499,8 +508,23 @@ static int Pager(char *buf)
 		frameTable[frameIndex].state = OCCUPIED;
 		frameTable[frameIndex].pid = fault->pid;
 
+		int tag;
+		int mmuStatus = USLOSS_MmuGetTag(&tag);
+		if (mmuStatus != USLOSS_MMU_OK){
+			if (debugFlag5){
+				USLOSS_Console("Pager(): mmu gettag failed\n");
+			}
+			Terminate(1);
+		}
 
 		/* do the mapping and copy info */
+		mmuStatus = USLOSS_MmuMap(tag, 0, frameIndex, USLOSS_MMU_PROT_RW );
+		if (mmuStatus != USLOSS_MMU_OK){
+			if (debugFlag5){
+				USLOSS_Console("Pager(): mmu map failed\n");
+			}
+			Terminate(1);
+		}
 
 		/* Unblock waiting (faulting) process */
 		if (debugFlag5){
@@ -562,4 +586,8 @@ void initFrameTable(int frames){
 		frameTable[i].state = UNUSED;
 		frameTable[i].clean = 1;
 	}
+}
+
+Process* getProc(int pid){
+	return &procTable[pid % MAXPROC];
 }

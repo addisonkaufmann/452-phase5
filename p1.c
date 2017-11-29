@@ -1,25 +1,50 @@
 
 #include "usloss.h"
-#define DEBUG 0
-extern int debugflag;
+#include <usyscall.h>
+#include <assert.h>
+#include <phase1.h>
+#include <phase2.h>
+#include <phase3.h>
+#include <phase4.h>
+#include <phase5.h>
+#include <libuser.h>
+#include "providedPrototypes.h"
+#include <vm.h>
+#include <string.h>
+
+int p1debug = 0;
+
+extern Process * getProc();
+
 
 void
 p1_fork(int pid)
 {
-    if (DEBUG && debugflag)
+    if (p1debug)
         USLOSS_Console("p1_fork() called: pid = %d\n", pid);
+
+    //get my process
+    Process * me = getProc(pid);
+
+    //set my proc table stuff
+    me->status = OCCUPIED;
+    me->pid = pid;
+
+    //allocate the pagetable
+    me->pageTable = (PTE *) malloc(me->numPages * sizeof(PTE));
+
 } /* p1_fork */
 
 void
 p1_switch(int old, int new)
 {
-    if (DEBUG && debugflag)
+    if (p1debug)
         USLOSS_Console("p1_switch() called: old = %d, new = %d\n", old, new);
 } /* p1_switch */
 
 void
 p1_quit(int pid)
 {
-    if (DEBUG && debugflag)
+    if (p1debug)
         USLOSS_Console("p1_quit() called: pid = %d\n", pid);
 } /* p1_quit */
