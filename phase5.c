@@ -34,6 +34,7 @@ static void FaultHandler(int type, void * offset);
 static void vmInit(USLOSS_Sysargs *USLOSS_SysargsPtr);
 static void vmDestroy(USLOSS_Sysargs *USLOSS_SysargsPtr);
 static int Pager(char *buf);
+int numPages;
 
 int enterUserMode();
 void * vmInitReal(int mappings, int pages, int frames, int pagers);
@@ -151,7 +152,6 @@ static void vmInit(USLOSS_Sysargs * args)
 		args->arg1 = addr;
 		vmRegion = addr;
 		initialized = 1;
-		memset((char *) vmRegion, 0, pages * USLOSS_MmuPageSize());
 
 	}
 
@@ -249,6 +249,7 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	*/
 	for (int i = 0; i < MAXPROC; ++i) {
 		procTable[i].numPages = pages; // Set every procs' numPages but wait for them to be forked to actually initialize the page table.
+		numPages = pages;
 	}
 
 	/* 
@@ -546,6 +547,8 @@ static int Pager(char *buf)
 		if (debugFlag5){
 			USLOSS_Console("Pager(): waking up pid %d\n", fault->pid);
 		}
+		memset((char *) vmRegion, 0, numPages * USLOSS_MmuPageSize());
+
 
 		/* send "you get frame x" to waiting faulthandler, 
 			then faulthandler "unlocks" it eventually */
