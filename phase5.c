@@ -255,7 +255,7 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	/* 
 	* Create the fault mailbox.
 	*/
-	faultMbox = MboxCreate(0, sizeof(FaultMsg));
+	faultMbox = MboxCreate(1, 0);
 
 	/*
 	* Fork the pagers.
@@ -406,7 +406,7 @@ static void FaultHandler(int type /* MMU_INT */,
 						 void * offset  /* Offset within VM region */)  //FIXME: not sure if void* or int?
 {
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): called by pid %d\n", getpid());
+		USLOSS_Console("FaultHandler%d(): called by pid %d\n", getpid(), getpid());
 	}
 
 	int cause;
@@ -444,13 +444,13 @@ static void FaultHandler(int type /* MMU_INT */,
 
 	// Wake up a waiting pager
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): Waking up a pager\n");
+		USLOSS_Console("FaultHandler%d(): Waking up a pager\n", getpid());
 	}
-	MboxSend(faultMbox, NULL, 0);
+	MboxSend(faultMbox, NULL, 0); //should not be a blocking send!
 
 	// Block until the fault has been handled.
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): blocking to wait for a pager to process the fault\n");
+		USLOSS_Console("FaultHandler%d(): blocking to wait for a pager to process the fault (mbox %d)\n", getpid(), procTable[pid].faultMbox);
 	}
 
 	//which frame did I get?
@@ -459,7 +459,7 @@ static void FaultHandler(int type /* MMU_INT */,
 
 
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler(): woke up after fault, given frame #%d by pager\n", myframe);
+		USLOSS_Console("FaultHandler%d(): woke up after fault, given frame #%d by pager\n", getpid(), myframe);
 	}
 
 	//eventually set frame back to unused
@@ -542,17 +542,20 @@ static int Pager(char *buf)
 			}
 			Terminate(1);
 		}
+		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize()); //FIXME: set just the page to 0, or the whole vmRegion?
 
 		/* Unblock waiting (faulting) process */
 		if (debugFlag5){
-			USLOSS_Console("Pager(): waking up pid %d\n", fault->pid);
+			USLOSS_Console("Pager(): waking up pid %d (mbox %d)\n", fault->pid, fault->replyMbox);
 		}
-		memset((char *) vmRegion, 0, numPages * USLOSS_MmuPageSize());
 
 
 		/* send "you get frame x" to waiting faulthandler, 
 			then faulthandler "unlocks" it eventually */
 		MboxSend(fault->replyMbox, &frameIndex, sizeof(int));
+		if (debugFlag5){
+				USLOSS_Console("Pager(): done with iteration\n");
+			}
 	}
 	return 0;
 } /* Pager */
