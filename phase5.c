@@ -35,6 +35,7 @@ static void vmInit(USLOSS_Sysargs *USLOSS_SysargsPtr);
 static void vmDestroy(USLOSS_Sysargs *USLOSS_SysargsPtr);
 static int Pager(char *buf);
 int numPages;
+int startingFrame = 0;
 
 int enterUserMode();
 void * vmInitReal(int mappings, int pages, int frames, int pagers);
@@ -42,6 +43,7 @@ void initProcTable();
 void vmDestroyReal(void);
 void initFrameTable();
 int scanForFrame();
+int clockSweep();
 
 void * vmRegion; //FIXME: not sure what this is supposed to be
 static Process procTable[MAXPROC];
@@ -406,7 +408,7 @@ static void FaultHandler(int type /* MMU_INT */,
 						 void * offset  /* Offset within VM region */)  //FIXME: not sure if void* or int?
 {
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler%d(): called by pid %d\n", getpid(), getpid());
+		USLOSS_Console("FaultHandler%d(): called by pid %d,", getpid(), getpid());
 	}
 
 	int cause;
@@ -415,6 +417,11 @@ static void FaultHandler(int type /* MMU_INT */,
 	cause = USLOSS_MmuGetCause();
 	assert(cause == USLOSS_MMU_FAULT);
 	vmStats.faults++;
+
+	if (debugFlag5) {
+		USLOSS_Console("faults now = %d\n", vmStats.faults);
+	}
+
 	
 	/*
 	* Fill in faults[pid % MAXPROC], send it to the pagers, and wait for the
@@ -589,30 +596,37 @@ int clockSweep(){
 	//first check referenced
 	//if everyone's been referenced then loop again check clean vs. dirty
 
-	int index = -1;
 
 	//loop over each frame, set referenced to false, find first unreferenced
-	for (int i = 0; i < numFrames; i++){
+	int i = startingFrame; 
+	for (int x = 0; x < numFrames; x++){ //loop through all the frames
 		if (frameTable[i].referenced){
 			frameTable[i].referenced = 0;
-		} else if (index == -1){
-			USLOSS_Console("Pager(): found unreferenced frame #%d\n", i);
-			index = i;
+		} else {
+			startingFrame = (i+1)%numFrames;
+			if (debugFlag5){
+				USLOSS_Console("Pager(): found unreferenced frame #%d\n", i);
+			}
+			return i;
 		}
-	}
-	if (index != -1){
-		return index;
+		i = (i+1)%numFrames;
 	}
 
 	//no unreferenced frames, find clean frame
-	USLOSS_Console("Pager(): all frames are referenced, have to check clean/dirty\n");
-	for (int i = 0; i < numFrames; i++){
-		if (frameTable[i].clean){
-			USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
-			index = i;
+	if (debugFlag5){
+		USLOSS_Console("Pager(): all frames are referenced, have to check clean/dirty\n");
+	}
+
+	for (int j = 0; j < numFrames; j++){
+		if (frameTable[j].clean){
+			if (debugFlag5){
+				USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
+			}
+			startingFrame = (j+1)%numFrames;
+			return j;
 		}
 	}
-	return index;
+	return 0;
 }
 
 int scanForFrame(){
