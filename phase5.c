@@ -35,6 +35,7 @@ static void vmInit(USLOSS_Sysargs *USLOSS_SysargsPtr);
 static void vmDestroy(USLOSS_Sysargs *USLOSS_SysargsPtr);
 static int Pager(char *buf);
 int numPages;
+int startingFrame = 0;
 
 int enterUserMode();
 void * vmInitReal(int mappings, int pages, int frames, int pagers);
@@ -42,6 +43,8 @@ void initProcTable();
 void vmDestroyReal(void);
 void initFrameTable();
 int scanForFrame();
+int clockSweep();
+Process* getProc();
 
 void * vmRegion; //FIXME: not sure what this is supposed to be
 static Process procTable[MAXPROC];
@@ -406,7 +409,7 @@ static void FaultHandler(int type /* MMU_INT */,
 						 void * offset  /* Offset within VM region */)  //FIXME: not sure if void* or int?
 {
 	if (debugFlag5) {
-		USLOSS_Console("FaultHandler%d(): called by pid %d\n", getpid(), getpid());
+		USLOSS_Console("FaultHandler%d(): called by pid %d,", getpid(), getpid());
 	}
 
 	int cause;
@@ -415,6 +418,11 @@ static void FaultHandler(int type /* MMU_INT */,
 	cause = USLOSS_MmuGetCause();
 	assert(cause == USLOSS_MMU_FAULT);
 	vmStats.faults++;
+
+	if (debugFlag5) {
+		USLOSS_Console("faults now = %d\n", vmStats.faults);
+	}
+
 	
 	/*
 	* Fill in faults[pid % MAXPROC], send it to the pagers, and wait for the
@@ -457,13 +465,39 @@ static void FaultHandler(int type /* MMU_INT */,
 	int myframe;
 	MboxReceive(procTable[pid].faultMbox, &myframe, sizeof(int));
 
-
-
 	if (debugFlag5) {
 		USLOSS_Console("FaultHandler%d(): woke up after fault, given frame #%d by pager\n", getpid(), myframe);
 	}
 
-	//eventually set frame back to unused
+	//update MY pagetable
+	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
+	Process* me = getProc(getpid());
+	me->pageTable[pageNumber].frame = myframe;
+	me->pageTable[pageNumber].state = OCCUPIED; //FIXME: not sure
+
+
+	//call map
+	int tag;
+	int mmuStatus = USLOSS_MmuGetTag(&tag);
+	if (mmuStatus != USLOSS_MMU_OK){
+		if (debugFlag5){
+			USLOSS_Console("Pager(): mmu gettag failed\n");
+		}
+		Terminate(1);
+	}
+
+	mmuStatus = USLOSS_MmuMap(tag, pageNumber, myframe, USLOSS_MMU_PROT_RW );
+	if (mmuStatus != USLOSS_MMU_OK){
+		if (debugFlag5){
+			USLOSS_Console("Pager(): mmu map failed\n");
+		}
+		Terminate(1);
+	}
+
+
+	//unlock the frame (set to INCORE or something)
+	return;
+
 } /* FaultHandler */
 
 
@@ -501,7 +535,7 @@ static int Pager(char *buf)
 			USLOSS_Console("Pager(): woke up with fault from pid %d\n", fault->pid);
 		}
 
-		/* find the frame that were gonna use (above code) */
+		/* find the frame that were gonna use */
 		int frameIndex = scanForFrame();
 
 		/* If there isn't one then use clock algorithm to
@@ -526,8 +560,6 @@ static int Pager(char *buf)
 
 		/* Load page into frame from disk, if necessary */
 
-		
-
 		int tag;
 		int mmuStatus = USLOSS_MmuGetTag(&tag);
 		if (mmuStatus != USLOSS_MMU_OK){
@@ -539,13 +571,11 @@ static int Pager(char *buf)
 
 		int pageNumber = ((long)fault->addr) / USLOSS_MmuPageSize();
 
-
 		/* say the the pager "has" this frame, (change status in frame table) */
 		frameTable[frameIndex].state = OCCUPIED;
 		frameTable[frameIndex].pid = fault->pid;
 		frameTable[frameIndex].page = pageNumber;
 		frameTable[frameIndex].referenced = 1;
-
 
 
 		/* do the mapping and copy info */
@@ -557,13 +587,25 @@ static int Pager(char *buf)
 			Terminate(1);
 		}
 
-		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize()); //FIXME: set just the page to 0, or the whole vmRegion?
+		// memset or TODO: get info from disk
+		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize());
+		//you cannot write to a frame if the frame is not mapped to a page
+
+
+		//TODO: unmap
+		mmuStatus = USLOSS_MmuUnmap(tag, pageNumber);
+		if (mmuStatus != USLOSS_MMU_OK){
+			if (debugFlag5){
+				USLOSS_Console("Pager(): mmu map failed\n");
+			}
+			Terminate(1);
+		}
+
 
 		/* Unblock waiting (faulting) process */
 		if (debugFlag5){
 			USLOSS_Console("Pager(): waking up pid %d (mbox %d)\n", fault->pid, fault->replyMbox);
 		}
-
 
 		/* send "you get frame x" to waiting faulthandler, 
 			then faulthandler "unlocks" it eventually */
@@ -589,30 +631,37 @@ int clockSweep(){
 	//first check referenced
 	//if everyone's been referenced then loop again check clean vs. dirty
 
-	int index = -1;
 
 	//loop over each frame, set referenced to false, find first unreferenced
-	for (int i = 0; i < numFrames; i++){
+	int i = startingFrame; 
+	for (int x = 0; x < numFrames; x++){ //loop through all the frames
 		if (frameTable[i].referenced){
 			frameTable[i].referenced = 0;
-		} else if (index == -1){
-			USLOSS_Console("Pager(): found unreferenced frame #%d\n", i);
-			index = i;
+		} else {
+			startingFrame = (i+1)%numFrames;
+			if (debugFlag5){
+				USLOSS_Console("Pager(): found unreferenced frame #%d\n", i);
+			}
+			return i;
 		}
-	}
-	if (index != -1){
-		return index;
+		i = (i+1)%numFrames;
 	}
 
 	//no unreferenced frames, find clean frame
-	USLOSS_Console("Pager(): all frames are referenced, have to check clean/dirty\n");
-	for (int i = 0; i < numFrames; i++){
-		if (frameTable[i].clean){
-			USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
-			index = i;
+	if (debugFlag5){
+		USLOSS_Console("Pager(): all frames are referenced, have to check clean/dirty\n");
+	}
+
+	for (int j = 0; j < numFrames; j++){
+		if (frameTable[j].clean){
+			if (debugFlag5){
+				USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
+			}
+			startingFrame = (j+1)%numFrames;
+			return j;
 		}
 	}
-	return index;
+	return 0;
 }
 
 int scanForFrame(){
