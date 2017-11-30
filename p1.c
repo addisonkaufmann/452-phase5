@@ -21,6 +21,9 @@ extern int initialized;
 void
 p1_fork(int pid)
 {
+    if (!initialized && pid != 8) {
+        return;
+    }
     if (p1debug)
         USLOSS_Console("p1_fork() called: pid = %d\n", pid);
 
@@ -39,6 +42,9 @@ p1_fork(int pid)
 void
 p1_switch(int old, int new)
 {
+    if (!initialized) {
+        return;
+    }
     if (p1debug)
         USLOSS_Console("p1_switch() called: old = %d, new = %d\n", old, new);
     if (initialized){
@@ -49,6 +55,9 @@ p1_switch(int old, int new)
 void
 p1_quit(int pid)
 {
+    if (!initialized) {
+        return;
+    }
     if (p1debug)
         USLOSS_Console("p1_quit() called: pid = %d\n", pid);
 } /* p1_quit */
