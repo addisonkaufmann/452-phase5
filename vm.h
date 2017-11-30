@@ -36,6 +36,7 @@ typedef struct FTE {
     int  pid;        // Process using the frame.
     int  page;       // Page stored in the frame.
     int  clean;      // Specifies if the frame is clean or dirty (matches or has disparity with disk).
+    int referenced;
 } FTE;
 
 /*

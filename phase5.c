@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 0;
+int debugFlag5 = 1;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -458,6 +458,7 @@ static void FaultHandler(int type /* MMU_INT */,
 	MboxReceive(procTable[pid].faultMbox, &myframe, sizeof(int));
 
 
+
 	if (debugFlag5) {
 		USLOSS_Console("FaultHandler%d(): woke up after fault, given frame #%d by pager\n", getpid(), myframe);
 	}
@@ -510,8 +511,9 @@ static int Pager(char *buf)
 		if (frameIndex == -1){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): no frames available, have to do page replacement\n");
-				/* clock algorithm */
+				/* clock algorithm */	
 			}	
+			frameIndex = clockSweep();
 		} else {
 			if (debugFlag5){
 				USLOSS_Console("Pager(): available frame at index %d\n", frameIndex);
@@ -519,9 +521,7 @@ static int Pager(char *buf)
 		}
 		/* Load page into frame from disk, if necessary */
 
-		/* say the the pager "has" this frame, (change status in frame table) */
-		frameTable[frameIndex].state = OCCUPIED;
-		frameTable[frameIndex].pid = fault->pid;
+		
 
 		int tag;
 		int mmuStatus = USLOSS_MmuGetTag(&tag);
@@ -534,6 +534,15 @@ static int Pager(char *buf)
 
 		int pageNumber = ((long)fault->addr) / USLOSS_MmuPageSize();
 
+
+		/* say the the pager "has" this frame, (change status in frame table) */
+		frameTable[frameIndex].state = OCCUPIED;
+		frameTable[frameIndex].pid = fault->pid;
+		frameTable[frameIndex].page = pageNumber;
+		frameTable[frameIndex].referenced = 1;
+
+
+
 		/* do the mapping and copy info */
 		mmuStatus = USLOSS_MmuMap(tag, pageNumber, frameIndex, USLOSS_MMU_PROT_RW );
 		if (mmuStatus != USLOSS_MMU_OK){
@@ -542,6 +551,7 @@ static int Pager(char *buf)
 			}
 			Terminate(1);
 		}
+
 		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize()); //FIXME: set just the page to 0, or the whole vmRegion?
 
 		/* Unblock waiting (faulting) process */
@@ -554,11 +564,51 @@ static int Pager(char *buf)
 			then faulthandler "unlocks" it eventually */
 		MboxSend(fault->replyMbox, &frameIndex, sizeof(int));
 		if (debugFlag5){
-				USLOSS_Console("Pager(): done with iteration\n");
-			}
+			USLOSS_Console("Pager(): done with iteration\n");
+		}
+
 	}
 	return 0;
 } /* Pager */
+
+int clockSweep(){
+	//iterate from 0 or starting index (from last clock run) through all frames
+		//if frame x referenced -> set to 0
+		//else frameIndex = x
+	//next clock starting point = x+1 % numFrames
+
+	//unreferenced and clean is our favorite page to replace
+		//hasn't been referenced since the last clock sweep
+		//hasn't been changed since it was last written to the disk
+
+	//first check referenced
+	//if everyone's been referenced then loop again check clean vs. dirty
+
+	int index = -1;
+
+	//loop over each frame, set referenced to false, find first unreferenced
+	for (int i = 0; i < numFrames; i++){
+		if (frameTable[i].referenced){
+			frameTable[i].referenced = 0;
+		} else if (index == -1){
+			USLOSS_Console("Pager(): found unreferenced frame #%d\n", i);
+			index = i;
+		}
+	}
+	if (index != -1){
+		return index;
+	}
+
+	//no unreferenced frames, find clean frame
+	USLOSS_Console("Pager(): all frames are referenced, have to check clean/dirty\n");
+	for (int i = 0; i < numFrames; i++){
+		if (frameTable[i].clean){
+			USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
+			index = i;
+		}
+	}
+	return index;
+}
 
 int scanForFrame(){
 /* Look for free frame */
@@ -607,6 +657,7 @@ void initFrameTable(int frames){
 		frameTable[i].page = -1;
 		frameTable[i].state = UNUSED;
 		frameTable[i].clean = 1;
+		frameTable[i].referenced = 0;
 	}
 }
 
