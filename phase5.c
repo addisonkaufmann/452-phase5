@@ -44,6 +44,7 @@ void vmDestroyReal(void);
 void initFrameTable();
 int scanForFrame();
 int clockSweep();
+Process* getProc();
 
 void * vmRegion; //FIXME: not sure what this is supposed to be
 static Process procTable[MAXPROC];
@@ -464,13 +465,39 @@ static void FaultHandler(int type /* MMU_INT */,
 	int myframe;
 	MboxReceive(procTable[pid].faultMbox, &myframe, sizeof(int));
 
-
-
 	if (debugFlag5) {
 		USLOSS_Console("FaultHandler%d(): woke up after fault, given frame #%d by pager\n", getpid(), myframe);
 	}
 
-	//eventually set frame back to unused
+	//update MY pagetable
+	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
+	Process* me = getProc(getpid());
+	me->pageTable[pageNumber].frame = myframe;
+	me->pageTable[pageNumber].state = OCCUPIED; //FIXME: not sure
+
+
+	//call map
+	int tag;
+	int mmuStatus = USLOSS_MmuGetTag(&tag);
+	if (mmuStatus != USLOSS_MMU_OK){
+		if (debugFlag5){
+			USLOSS_Console("Pager(): mmu gettag failed\n");
+		}
+		Terminate(1);
+	}
+
+	mmuStatus = USLOSS_MmuMap(tag, pageNumber, myframe, USLOSS_MMU_PROT_RW );
+	if (mmuStatus != USLOSS_MMU_OK){
+		if (debugFlag5){
+			USLOSS_Console("Pager(): mmu map failed\n");
+		}
+		Terminate(1);
+	}
+
+
+	//unlock the frame (set to INCORE or something)
+	return;
+
 } /* FaultHandler */
 
 
@@ -508,7 +535,7 @@ static int Pager(char *buf)
 			USLOSS_Console("Pager(): woke up with fault from pid %d\n", fault->pid);
 		}
 
-		/* find the frame that were gonna use (above code) */
+		/* find the frame that were gonna use */
 		int frameIndex = scanForFrame();
 
 		/* If there isn't one then use clock algorithm to
@@ -533,8 +560,6 @@ static int Pager(char *buf)
 
 		/* Load page into frame from disk, if necessary */
 
-		
-
 		int tag;
 		int mmuStatus = USLOSS_MmuGetTag(&tag);
 		if (mmuStatus != USLOSS_MMU_OK){
@@ -546,13 +571,11 @@ static int Pager(char *buf)
 
 		int pageNumber = ((long)fault->addr) / USLOSS_MmuPageSize();
 
-
 		/* say the the pager "has" this frame, (change status in frame table) */
 		frameTable[frameIndex].state = OCCUPIED;
 		frameTable[frameIndex].pid = fault->pid;
 		frameTable[frameIndex].page = pageNumber;
 		frameTable[frameIndex].referenced = 1;
-
 
 
 		/* do the mapping and copy info */
@@ -564,13 +587,25 @@ static int Pager(char *buf)
 			Terminate(1);
 		}
 
-		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize()); //FIXME: set just the page to 0, or the whole vmRegion?
+		// memset or TODO: get info from disk
+		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize());
+		//you cannot write to a frame if the frame is not mapped to a page
+
+
+		//TODO: unmap
+		mmuStatus = USLOSS_MmuUnmap(tag, pageNumber);
+		if (mmuStatus != USLOSS_MMU_OK){
+			if (debugFlag5){
+				USLOSS_Console("Pager(): mmu map failed\n");
+			}
+			Terminate(1);
+		}
+
 
 		/* Unblock waiting (faulting) process */
 		if (debugFlag5){
 			USLOSS_Console("Pager(): waking up pid %d (mbox %d)\n", fault->pid, fault->replyMbox);
 		}
-
 
 		/* send "you get frame x" to waiting faulthandler, 
 			then faulthandler "unlocks" it eventually */
