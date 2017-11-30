@@ -502,23 +502,28 @@ static int Pager(char *buf)
 		}
 
 		/* find the frame that were gonna use (above code) */
-
 		int frameIndex = scanForFrame();
 
 		/* If there isn't one then use clock algorithm to
 		   replace a page (perhaps write to disk) */
-
 		if (frameIndex == -1){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): no frames available, have to do page replacement\n");
 				/* clock algorithm */	
 			}	
 			frameIndex = clockSweep();
+
+			if (!frameTable[frameIndex].clean){
+				USLOSS_Console("Pager(): the frame we found is dirty, writing to disk\n");
+				//TODO: write page in frame to disk
+			}
 		} else {
 			if (debugFlag5){
 				USLOSS_Console("Pager(): available frame at index %d\n", frameIndex);
 			}
 		}
+
+
 		/* Load page into frame from disk, if necessary */
 
 		
