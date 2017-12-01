@@ -74,6 +74,9 @@ p1_switch(int old, int new)
 
                 if (oldPages[i].state == INFRAME){
                     mmuStatus = USLOSS_MmuUnmap(TAG, i);
+                    if (p1debug){
+                        USLOSS_Console("p1_switch(): unmapped page %d from old proc %d\n", i, old);
+                    }
                     if (mmuStatus != USLOSS_MMU_OK){
                         if (p1debug){
                             USLOSS_Console("p1_switch(): mmu unmap failed\n");
@@ -97,6 +100,9 @@ p1_switch(int old, int new)
                 // TODO: Check if two pages are mapped to the same frame
                 if (newPages[i].state == INFRAME){
                     mmuStatus = USLOSS_MmuMap(TAG, i, newPages[i].frame, USLOSS_MMU_PROT_RW );
+                    if (p1debug){
+                        USLOSS_Console("p1_switch(): mapped page %d to frame %d for new proc %d\n", i, newPages[i].frame, new);
+                    }
                     if (mmuStatus != USLOSS_MMU_OK){
                         if (p1debug){
                             USLOSS_Console("p1_switch(): mmu map failed\n");

@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 1;
+int debugFlag5 = 0;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -66,7 +66,6 @@ int initialized;
 int destroy = 0;
 
 FaultMsg* faultQueue;
-
 
 
 
@@ -473,12 +472,7 @@ static void FaultHandler(int type /* MMU_INT */,
 
 	//update MY pagetable
 	Process* me = getProc(getpid());
-	for(int i = 0; i < me->numPages; ++i) { // Check if we are swapping a page already in frame with the new one. If so, update that old page to have no frame.
-		if (me->pageTable[i].frame == myframe) {
-			me->pageTable[i].frame = -1;
-			break;
-		}
-	}
+	
 	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
 	me->pageTable[pageNumber].frame = myframe;
 	me->pageTable[pageNumber].state = INFRAME; //FIXME: not sure
@@ -493,8 +487,10 @@ static void FaultHandler(int type /* MMU_INT */,
 		Terminate(1);
 	}
 
-	printFrameTable();
-	printPageTable(me->pid);
+	if (debugFlag5){
+		printFrameTable();
+		printPageTable(me->pid);
+	}
 
 	//unlock the frame 
 
@@ -558,9 +554,23 @@ static int Pager(char *buf)
 			frameIndex = clockSweep();
 
 			if (!frameTable[frameIndex].clean){
-				USLOSS_Console("Pager(): the frame we found is dirty, writing to disk\n");
+				if (debugFlag5){
+					USLOSS_Console("Pager(): the frame we found is dirty, writing to disk\n");
+				}
 				//TODO: write page in frame to disk
 			}
+
+			if (debugFlag5){
+				USLOSS_Console("Pager(): clock algo gave us frame #%d, formerly mapped to pid %d page %d\n", frameIndex, frameTable[frameIndex].pid, frameTable[frameIndex].page);
+			}
+			int prevPid = frameTable[frameIndex].pid;
+			int prevPageNumber = frameTable[frameIndex].page;
+			PTE* pageTable = procTable[prevPid].pageTable;
+			pageTable[prevPageNumber].frame = -1;
+			pageTable[prevPageNumber].state = ONDISK; //TODO: acutally put it on disk...
+
+
+
 		} else {
 			if (debugFlag5){
 				USLOSS_Console("Pager(): available frame at index %d\n", frameIndex);
@@ -609,6 +619,8 @@ static int Pager(char *buf)
 		if (debugFlag5){
 			USLOSS_Console("Pager(): waking up pid %d (mbox %d)\n", fault->pid, fault->replyMbox);
 		}
+
+
 
 		/* send "you get frame x" to waiting faulthandler, 
 			then faulthandler "unlocks" it eventually */
