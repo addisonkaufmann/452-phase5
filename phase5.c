@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 1;
+int debugFlag5 = 0;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -495,6 +495,12 @@ static void FaultHandler(int type /* MMU_INT */,
 	}
 
 	//unlock the frame 
+
+	vmStats.freeFrames--;
+
+
+	//unlock the frame (set to INCORE or something)
+
 	return;
 
 } /* FaultHandler */
