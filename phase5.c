@@ -558,6 +558,7 @@ static int Pager(char *buf)
 
 
 		/* Load page into frame from disk, if necessary */
+		//if page is ONDISK
 
 
 		int pageNumber = ((long)fault->addr) / USLOSS_MmuPageSize();
@@ -570,7 +571,7 @@ static int Pager(char *buf)
 
 
 		/* do the mapping and copy info */
-		int mmuStatus = USLOSS_MmuMap(TAG, pageNumber, frameIndex, USLOSS_MMU_PROT_RW );
+		int mmuStatus = USLOSS_MmuMap(TAG, 0, frameIndex, USLOSS_MMU_PROT_RW );
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): mmu map failed\n");
@@ -584,7 +585,7 @@ static int Pager(char *buf)
 
 
 		//TODO: unmap
-		mmuStatus = USLOSS_MmuUnmap(TAG, pageNumber);
+		mmuStatus = USLOSS_MmuUnmap(TAG, 0);
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): mmu map failed\n");
