@@ -494,8 +494,7 @@ static void FaultHandler(int type /* MMU_INT */,
 		Terminate(1);
 	}
 
-
-	//unlock the frame (set to INCORE or something)
+	//unlock the frame 
 	return;
 
 } /* FaultHandler */
@@ -619,6 +618,7 @@ static int Pager(char *buf)
 } /* Pager */
 
 int clockSweep(){
+
 	//iterate from 0 or starting index (from last clock run) through all frames
 		//if frame x referenced -> set to 0
 		//else frameIndex = x

@@ -12,7 +12,7 @@
 #include <vm.h>
 #include <string.h>
 
-int p1debug = 0;
+int p1debug = 1;
 
 extern Process * getProc();
 extern int initialized;
@@ -43,7 +43,74 @@ p1_switch(int old, int new)
         USLOSS_Console("p1_switch() called: old = %d, new = %d\n", old, new);
     if (initialized){
         vmStats.switches++;
+    
+
+        Process* oldProc = getProc(old);
+        Process* newProc = getProc(new);
+
+        int tag;
+        int mmuStatus = USLOSS_MmuGetTag(&tag);
+        if (mmuStatus != USLOSS_MMU_OK){
+            if (p1debug){
+                USLOSS_Console("p1_switch(): mmu gettag failed\n");
+            }
+            quit(1);
+        }
+
+        PTE* oldPages = oldProc->pageTable;
+
+        if (p1debug){
+            USLOSS_Console("p1_switch(): starting to unmap old %p\n", oldPages);
+        }
+
+
+        //unmap old process pages
+        if (oldPages != NULL){
+            for (int i = 0; i < oldProc->numPages; i++){
+
+                if (oldPages[i].state != UNUSED){
+                    mmuStatus = USLOSS_MmuUnmap(tag, i);
+                    if (mmuStatus != USLOSS_MMU_OK){
+                        if (p1debug){
+                            USLOSS_Console("p1_switch(): mmu unmap failed\n");
+                        }
+                        quit(1);
+                    } 
+                }
+                
+            }
+        }
+
+        if (p1debug){
+            USLOSS_Console("p1_switch(): finished unmapping old\n");
+        }
+
+        PTE* newPages = newProc->pageTable;
+
+        //map new process pages
+        if (newPages != NULL){
+            for (int i = 0; i < newProc->numPages; i++){
+
+                if (newPages[i].state != UNUSED){
+                    mmuStatus = USLOSS_MmuMap(tag, i, newPages[i].frame, USLOSS_MMU_PROT_RW );
+                    if (mmuStatus != USLOSS_MMU_OK){
+                        if (p1debug){
+                            USLOSS_Console("p1_switch(): mmu map failed\n");
+                        }
+                        quit(1);
+                    }
+                }
+               
+            }
+        }
+
+        if (p1debug){
+            USLOSS_Console("p1_switch(): finished mapping new\n");
+        }
     }
+    
+
+    // int    USLOSS_MmuUnmap(int tag, int page)
 } /* p1_switch */
 
 void
