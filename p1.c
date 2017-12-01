@@ -94,7 +94,7 @@ p1_switch(int old, int new)
         //map new process pages
         if (newPages != NULL){
             for (int i = 0; i < newProc->numPages; i++){
-
+                // TODO: Check if two pages are mapped to the same frame
                 if (newPages[i].state == INFRAME){
                     mmuStatus = USLOSS_MmuMap(TAG, i, newPages[i].frame, USLOSS_MMU_PROT_RW );
                     if (mmuStatus != USLOSS_MMU_OK){

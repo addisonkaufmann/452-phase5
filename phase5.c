@@ -45,6 +45,8 @@ void initFrameTable();
 int scanForFrame();
 int clockSweep();
 Process* getProc();
+void printFrameTable();
+void printPageTable(int pid);
 
 void * vmRegion; //FIXME: not sure what this is supposed to be
 static Process procTable[MAXPROC];
@@ -470,8 +472,14 @@ static void FaultHandler(int type /* MMU_INT */,
 	}
 
 	//update MY pagetable
-	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
 	Process* me = getProc(getpid());
+	for(int i = 0; i < me->numPages; ++i) { // Check if we are swapping a page already in frame with the new one. If so, update that old page to have no frame.
+		if (me->pageTable[i].frame == myframe) {
+			me->pageTable[i].frame = -1;
+			break;
+		}
+	}
+	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
 	me->pageTable[pageNumber].frame = myframe;
 	me->pageTable[pageNumber].state = INFRAME; //FIXME: not sure
 
@@ -484,6 +492,9 @@ static void FaultHandler(int type /* MMU_INT */,
 		}
 		Terminate(1);
 	}
+
+	printFrameTable();
+	printPageTable(me->pid);
 
 	//unlock the frame 
 
@@ -571,7 +582,7 @@ static int Pager(char *buf)
 
 
 		/* do the mapping and copy info */
-		int mmuStatus = USLOSS_MmuMap(TAG, 0, frameIndex, USLOSS_MMU_PROT_RW );
+		int mmuStatus = USLOSS_MmuMap(TAG, pageNumber, frameIndex, USLOSS_MMU_PROT_RW );
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): mmu map failed\n");
@@ -585,7 +596,7 @@ static int Pager(char *buf)
 
 
 		//TODO: unmap
-		mmuStatus = USLOSS_MmuUnmap(TAG, 0);
+		mmuStatus = USLOSS_MmuUnmap(TAG, pageNumber);
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): mmu map failed\n");
@@ -706,6 +717,24 @@ void initFrameTable(int frames){
 		frameTable[i].clean = 1;
 		frameTable[i].referenced = 0;
 	}
+}
+
+void printFrameTable() {
+	USLOSS_Console("\nFrame table:\n");
+	for (int i = 0; i < numFrames; i++) {
+		USLOSS_Console("Index: %d\tPID: %d\tPage: %d\tState: %d\tClean: %d\tReferenced: %d\n", i, frameTable[i].pid, frameTable[i].page, frameTable[i].state, frameTable[i].clean, frameTable[i].referenced);
+	}
+	USLOSS_Console("\n");
+}
+
+void printPageTable(int pid) {
+	Process * proc = getProc(pid);
+	PTE * table = proc->pageTable;
+	USLOSS_Console("\nPage table for PID = %d:\n", pid);
+	for (int i = 0; i < proc->numPages; ++i) {
+		USLOSS_Console("Index: %d\tState: %d\tFrame: %d\tDiskBlock: %d\n", i, table[i].state, table[i].frame, table[i].diskBlock);
+	}
+	USLOSS_Console("\n");
 }
 
 Process* getProc(int pid){
