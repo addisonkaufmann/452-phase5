@@ -36,6 +36,11 @@ p1_fork(int pid)
 
     //allocate the pagetable
     me->pageTable = (PTE *) malloc(me->numPages * sizeof(PTE));
+    for (int i = 0; i < me->numPages; ++i) {
+        me->pageTable[i].state = UNUSED;
+        me->pageTable[i].frame = -1;
+        me->pageTable[i].diskBlock = -1;
+    }
 
 } /* p1_fork */
 
@@ -60,4 +65,41 @@ p1_quit(int pid)
     }
     if (p1debug)
         USLOSS_Console("p1_quit() called: pid = %d\n", pid);
+
+    Process * me = getProc(pid);
+
+    int tag;
+    int mmuStatus = USLOSS_MmuGetTag(&tag);
+    if (mmuStatus != USLOSS_MMU_OK){
+        if (p1debug){
+            USLOSS_Console("Pager(): mmu gettag failed\n");
+        }
+        //Terminate(1);
+    }
+
+    // Clean out frame table entries
+    if (me->pageTable != NULL) {
+        for (int i = 0; i < me->numPages; ++i) {
+            if (me->pageTable[i].frame != -1) {
+                mmuStatus = USLOSS_MmuUnmap(tag, i);
+                if (mmuStatus != USLOSS_MMU_OK){
+                    if (p1debug){
+                        USLOSS_Console("Pager(): mmu map failed\n");
+                    }
+                    //Terminate(1);
+                }
+                vmStats.freeFrames++;
+            }
+        }
+    }
+
+    // TODO: Clean out disk entries?
+
+
+    me->pid = -1;
+    MboxRelease(me->faultMbox);
+    me->status = UNUSED;
+    me->numPages = -1;
+    free(me->pageTable);
+
 } /* p1_quit */
