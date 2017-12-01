@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 0;
+int debugFlag5 = 1;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -473,20 +473,11 @@ static void FaultHandler(int type /* MMU_INT */,
 	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
 	Process* me = getProc(getpid());
 	me->pageTable[pageNumber].frame = myframe;
-	me->pageTable[pageNumber].state = OCCUPIED; //FIXME: not sure
+	me->pageTable[pageNumber].state = INFRAME; //FIXME: not sure
 
 
-	//call map
-	int tag;
-	int mmuStatus = USLOSS_MmuGetTag(&tag);
-	if (mmuStatus != USLOSS_MMU_OK){
-		if (debugFlag5){
-			USLOSS_Console("Pager(): mmu gettag failed\n");
-		}
-		Terminate(1);
-	}
 
-	mmuStatus = USLOSS_MmuMap(tag, pageNumber, myframe, USLOSS_MMU_PROT_RW );
+	int mmuStatus = USLOSS_MmuMap(TAG, pageNumber, myframe, USLOSS_MMU_PROT_RW );
 	if (mmuStatus != USLOSS_MMU_OK){
 		if (debugFlag5){
 			USLOSS_Console("Pager(): mmu map failed\n");
@@ -526,12 +517,15 @@ static int Pager(char *buf)
 	while(1) {
 		/* Wait for fault to occur (receive from mailbox) */
 		MboxReceive(faultMbox, NULL, 0);
+		if (isZapped()){
+			return 1;
+		}
 		
 
 		/* Pop message from faultqueue */
 		FaultMsg* fault = faultQueue;
 		if (fault == NULL){
-			quit(1);
+			return 1;
 		}
 		faultQueue = faultQueue->next;
 		fault->next = NULL;
@@ -565,14 +559,6 @@ static int Pager(char *buf)
 
 		/* Load page into frame from disk, if necessary */
 
-		int tag;
-		int mmuStatus = USLOSS_MmuGetTag(&tag);
-		if (mmuStatus != USLOSS_MMU_OK){
-			if (debugFlag5){
-				USLOSS_Console("Pager(): mmu gettag failed\n");
-			}
-			Terminate(1);
-		}
 
 		int pageNumber = ((long)fault->addr) / USLOSS_MmuPageSize();
 
@@ -584,7 +570,7 @@ static int Pager(char *buf)
 
 
 		/* do the mapping and copy info */
-		mmuStatus = USLOSS_MmuMap(tag, pageNumber, frameIndex, USLOSS_MMU_PROT_RW );
+		int mmuStatus = USLOSS_MmuMap(TAG, pageNumber, frameIndex, USLOSS_MMU_PROT_RW );
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): mmu map failed\n");
@@ -598,7 +584,7 @@ static int Pager(char *buf)
 
 
 		//TODO: unmap
-		mmuStatus = USLOSS_MmuUnmap(tag, pageNumber);
+		mmuStatus = USLOSS_MmuUnmap(TAG, pageNumber);
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): mmu map failed\n");

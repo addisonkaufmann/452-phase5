@@ -12,7 +12,7 @@
 #include <vm.h>
 #include <string.h>
 
-int p1debug = 1;
+int p1debug = 0;
 
 extern Process * getProc();
 extern int initialized;
@@ -59,14 +59,7 @@ p1_switch(int old, int new)
         Process* oldProc = getProc(old);
         Process* newProc = getProc(new);
 
-        int tag;
-        int mmuStatus = USLOSS_MmuGetTag(&tag);
-        if (mmuStatus != USLOSS_MMU_OK){
-            if (p1debug){
-                USLOSS_Console("p1_switch(): mmu gettag failed\n");
-            }
-            quit(1);
-        }
+
 
         PTE* oldPages = oldProc->pageTable;
 
@@ -74,13 +67,13 @@ p1_switch(int old, int new)
             USLOSS_Console("p1_switch(): starting to unmap old %p\n", oldPages);
         }
 
-
+        int mmuStatus;
         //unmap old process pages
         if (oldPages != NULL){
             for (int i = 0; i < oldProc->numPages; i++){
 
-                if (oldPages[i].state != UNUSED){
-                    mmuStatus = USLOSS_MmuUnmap(tag, i);
+                if (oldPages[i].state == INFRAME){
+                    mmuStatus = USLOSS_MmuUnmap(TAG, i);
                     if (mmuStatus != USLOSS_MMU_OK){
                         if (p1debug){
                             USLOSS_Console("p1_switch(): mmu unmap failed\n");
@@ -102,8 +95,8 @@ p1_switch(int old, int new)
         if (newPages != NULL){
             for (int i = 0; i < newProc->numPages; i++){
 
-                if (newPages[i].state != UNUSED){
-                    mmuStatus = USLOSS_MmuMap(tag, i, newPages[i].frame, USLOSS_MMU_PROT_RW );
+                if (newPages[i].state == INFRAME){
+                    mmuStatus = USLOSS_MmuMap(TAG, i, newPages[i].frame, USLOSS_MMU_PROT_RW );
                     if (mmuStatus != USLOSS_MMU_OK){
                         if (p1debug){
                             USLOSS_Console("p1_switch(): mmu map failed\n");
@@ -135,23 +128,16 @@ p1_quit(int pid)
 
     Process * me = getProc(pid);
 
-    int tag;
-    int mmuStatus = USLOSS_MmuGetTag(&tag);
-    if (mmuStatus != USLOSS_MMU_OK){
-        if (p1debug){
-            USLOSS_Console("Pager(): mmu gettag failed\n");
-        }
-        //Terminate(1);
-    }
 
+    int mmuStatus;
     // Clean out frame table entries
     if (me->pageTable != NULL) {
         for (int i = 0; i < me->numPages; ++i) {
             if (me->pageTable[i].frame != -1) {
-                mmuStatus = USLOSS_MmuUnmap(tag, i);
+                mmuStatus = USLOSS_MmuUnmap(TAG, i);
                 if (mmuStatus != USLOSS_MMU_OK){
                     if (p1debug){
-                        USLOSS_Console("Pager(): mmu map failed\n");
+                        USLOSS_Console("p1_quit(): mmu map failed\n");
                     }
                     //Terminate(1);
                 }

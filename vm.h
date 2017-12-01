@@ -12,8 +12,10 @@
  * Different states for a page.
  */
 #define UNUSED 500
-#define INCORE 501
+#define INFRAME 501
 #define OCCUPIED 502
+#define ONDISK 503
+
 /* You'll probably want more states */
 
 
