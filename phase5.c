@@ -47,8 +47,10 @@ int clockSweep();
 Process* getProc();
 void printFrameTable();
 void printPageTable(int pid);
+void writePage(int page, PTE * pageTable);
+int diskSweep();
 
-void * vmRegion; //FIXME: not sure what this is supposed to be
+void * vmRegion; 
 static Process procTable[MAXPROC];
 
 FaultMsg faults[MAXPROC]; /* Note that a process can have only
@@ -66,6 +68,7 @@ int initialized;
 int destroy = 0;
 
 FaultMsg* faultQueue;
+int * diskTable;
 
 
 
@@ -237,9 +240,6 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 		abort();
 	}
 	USLOSS_IntVec[USLOSS_MMU_INT] = FaultHandler;
-
-
-
 	
 	/*
 	* Initialize the frame table.
@@ -297,15 +297,21 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	
 	vmStats.pages = pages;
 	vmStats.frames = frames;
-	vmStats.diskBlocks = (sector*track*disk)/pageSize; // TODO: Disk stuff
+	vmStats.diskBlocks = (sector*track*disk)/pageSize; 
 	vmStats.freeFrames = frames;
 	vmStats.freeDiskBlocks = vmStats.diskBlocks;
 	vmStats.switches = 0;
 	vmStats.faults = 0;
-	vmStats.new = 1; //FIXME: should be 0
+	vmStats.new = 0; 
 	vmStats.pageIns = 0;
 	vmStats.pageOuts = 0;
 	vmStats.replaced = 0;
+
+	// Initialize the disk table
+	diskTable = (int*)malloc(sizeof(int) * vmStats.diskBlocks);
+	for (int i = 0; i < vmStats.diskBlocks; i++) {
+		diskTable[i] = UNUSED;
+	}
 
 	return USLOSS_MmuRegion(&dummy);
 } /* vmInitReal */
@@ -472,8 +478,10 @@ static void FaultHandler(int type /* MMU_INT */,
 
 	//update MY pagetable
 	Process* me = getProc(getpid());
-	
 	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
+	if (me->pageTable[pageNumber].state == UNUSED) {
+		vmStats.new++;
+	}
 	me->pageTable[pageNumber].frame = myframe;
 	me->pageTable[pageNumber].state = INFRAME; //FIXME: not sure
 
@@ -491,11 +499,6 @@ static void FaultHandler(int type /* MMU_INT */,
 		printFrameTable();
 		printPageTable(me->pid);
 	}
-
-	//unlock the frame 
-
-	vmStats.freeFrames--;
-
 
 	//unlock the frame (set to INCORE or something)
 
@@ -541,7 +544,7 @@ static int Pager(char *buf)
 			USLOSS_Console("Pager(): woke up with fault from pid %d\n", fault->pid);
 		}
 
-		/* find the frame that were gonna use */
+		/* find the frame that we're gonna use */
 		int frameIndex = scanForFrame();
 
 		/* If there isn't one then use clock algorithm to
@@ -568,13 +571,16 @@ static int Pager(char *buf)
 			PTE* pageTable = procTable[prevPid].pageTable;
 			pageTable[prevPageNumber].frame = -1;
 			pageTable[prevPageNumber].state = ONDISK; //TODO: acutally put it on disk...
-
-
+			//writePage(prevPageNumber, pageTable);
+			if (debugFlag5){
+				USLOSS_Console("Pager(): Wrote page %d to disk.\n", prevPageNumber);
+			}
 
 		} else {
 			if (debugFlag5){
 				USLOSS_Console("Pager(): available frame at index %d\n", frameIndex);
 			}
+			vmStats.freeFrames--;
 		}
 
 
@@ -604,8 +610,6 @@ static int Pager(char *buf)
 		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize());
 		//you cannot write to a frame if the frame is not mapped to a page
 
-
-		//TODO: unmap
 		mmuStatus = USLOSS_MmuUnmap(TAG, pageNumber);
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
@@ -620,8 +624,6 @@ static int Pager(char *buf)
 			USLOSS_Console("Pager(): waking up pid %d (mbox %d)\n", fault->pid, fault->replyMbox);
 		}
 
-
-
 		/* send "you get frame x" to waiting faulthandler, 
 			then faulthandler "unlocks" it eventually */
 		MboxSend(fault->replyMbox, &frameIndex, sizeof(int));
@@ -632,6 +634,39 @@ static int Pager(char *buf)
 	}
 	return 0;
 } /* Pager */
+
+
+void writePage(int page, PTE * pageTable) {
+	if (debugFlag5) {
+		USLOSS_Console("writePage(): called.\n");
+	}
+	int diskBlock = diskSweep();
+	USLOSS_Console("writePage(): 0.\n");
+	if (diskBlock == -1) {
+		USLOSS_Console("Pager(): disk full.\n");
+		Terminate(1);
+	}
+	char buff[USLOSS_MmuPageSize()];
+	USLOSS_Console("writePage(): .5.\n");
+	memcpy(buff, vmRegion, USLOSS_MmuPageSize());
+	USLOSS_Console("writePage(): 1.\n");
+	diskWriteReal(1, diskBlock, 0, 8, buff);
+	USLOSS_Console("writePage(): 2.\n");
+	pageTable[page].diskBlock = diskBlock;
+	vmStats.pageOuts++;
+	if (debugFlag5) {
+		USLOSS_Console("writePage(): done.\n");
+	}
+}
+
+int diskSweep() {
+	for (int i = 0; i < vmStats.diskBlocks; ++i) {
+		if (diskTable[i] == UNUSED) {
+			return i;
+		}
+	}
+	return -1;
+}
 
 int clockSweep(){
 
