@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 1;
+int debugFlag5 = 0;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -47,7 +47,7 @@ int clockSweep();
 Process* getProc();
 void printFrameTable();
 void printPageTable(int pid);
-void writePage(int page, PTE * pageTable);
+void writePage(int page, PTE * pageTable, int frameIndex);
 int diskSweep();
 
 void * vmRegion; 
@@ -478,9 +478,24 @@ static void FaultHandler(int type /* MMU_INT */,
 
 	//update MY pagetable
 	Process* me = getProc(getpid());
+	for(int i = 0; i < me->numPages; ++i) { // Check if we are swapping a page already in frame with the new one. If so, update that old page to have no frame.
+		if (me->pageTable[i].frame == myframe) {
+			me->pageTable[i].frame = -1;
+			me->pageTable[i].state = OCCUPIED;
+			int mmuStatus = USLOSS_MmuUnmap(TAG, i);
+			if (mmuStatus != USLOSS_MMU_OK){
+				if (debugFlag5){
+					USLOSS_Console("Pager(): mmu map failed\n");
+				}
+				Terminate(1);
+			}
+			break;
+		}
+	}
 	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
 	if (me->pageTable[pageNumber].state == UNUSED) {
 		vmStats.new++;
+		//writePage(pageNumber, me->pageTable, myframe);
 	}
 	me->pageTable[pageNumber].frame = myframe;
 	me->pageTable[pageNumber].state = INFRAME; //FIXME: not sure
@@ -541,7 +556,7 @@ static int Pager(char *buf)
 		fault->next = NULL;
 
 		if (debugFlag5){
-			USLOSS_Console("Pager(): woke up with fault from pid %d\n", fault->pid);
+			USLOSS_Console("Pager%d(): woke up with fault from pid %d\n", getpid(), fault->pid);
 		}
 
 		/* find the frame that we're gonna use */
@@ -555,26 +570,32 @@ static int Pager(char *buf)
 				/* clock algorithm */	
 			}	
 			frameIndex = clockSweep();
-
-			if (!frameTable[frameIndex].clean){
+			int access;
+			int status = USLOSS_MmuGetAccess(frameIndex, &access);
+			if (status != USLOSS_MMU_OK) {
+				USLOSS_Console("Pager(): Could not get access bit.\n");
+				Terminate(1);
+			}
+			if (access == USLOSS_MMU_DIRTY){
 				if (debugFlag5){
 					USLOSS_Console("Pager(): the frame we found is dirty, writing to disk\n");
 				}
-				//TODO: write page in frame to disk
+				// Write page in frame to disk
+				int prevPid = frameTable[frameIndex].pid;
+				int prevPageNumber = frameTable[frameIndex].page;
+				PTE* pageTable = procTable[prevPid].pageTable;
+				pageTable[prevPageNumber].frame = -1;
+				pageTable[prevPageNumber].state = ONDISK; //TODO: acutally put it on disk...
+				writePage(prevPageNumber, pageTable, frameIndex);
+				if (debugFlag5){
+					USLOSS_Console("Pager(): Wrote page %d to disk.\n", prevPageNumber);
+				}
 			}
 
 			if (debugFlag5){
 				USLOSS_Console("Pager(): clock algo gave us frame #%d, formerly mapped to pid %d page %d\n", frameIndex, frameTable[frameIndex].pid, frameTable[frameIndex].page);
 			}
-			int prevPid = frameTable[frameIndex].pid;
-			int prevPageNumber = frameTable[frameIndex].page;
-			PTE* pageTable = procTable[prevPid].pageTable;
-			pageTable[prevPageNumber].frame = -1;
-			pageTable[prevPageNumber].state = ONDISK; //TODO: acutally put it on disk...
-			writePage(prevPageNumber, pageTable);
-			if (debugFlag5){
-				USLOSS_Console("Pager(): Wrote page %d to disk.\n", prevPageNumber);
-			}
+
 
 		} else {
 			if (debugFlag5){
@@ -596,6 +617,13 @@ static int Pager(char *buf)
 		frameTable[frameIndex].page = pageNumber;
 		frameTable[frameIndex].referenced = 1;
 
+		// USLOSS_Console("Pager(): Updating pager's page table so that page %d is in frame %d.\n", pageNumber, frameIndex);
+		// PTE * pageTable = procTable[getpid() % MAXPROC].pageTable;
+		// pageTable[pageNumber].frame = frameIndex;
+
+		if (debugFlag5) {
+			printFrameTable();
+		}
 
 		/* do the mapping and copy info */
 		int mmuStatus = USLOSS_MmuMap(TAG, pageNumber, frameIndex, USLOSS_MMU_PROT_RW );
@@ -636,18 +664,23 @@ static int Pager(char *buf)
 } /* Pager */
 
 
-void writePage(int page, PTE * pageTable) {
+void writePage(int page, PTE * pageTable, int frameIndex) {
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): called.\n");
 	}
 	int diskBlock = diskSweep();
-	USLOSS_Console("writePage(): 0.\n");
 	if (diskBlock == -1) {
 		USLOSS_Console("Pager(): disk full.\n");
 		Terminate(1);
 	}
 	char buff[USLOSS_MmuPageSize()];
-	USLOSS_Console("writePage(): .5.\n");
+	int mmuStatus = USLOSS_MmuMap(TAG, page, frameIndex, USLOSS_MMU_PROT_RW );
+	if (mmuStatus != USLOSS_MMU_OK){
+		if (debugFlag5){
+			USLOSS_Console("Pager(): mmu map failed\n");
+		}
+		Terminate(1);
+	}
 	memcpy(buff, vmRegion + page * USLOSS_MmuPageSize(), USLOSS_MmuPageSize());
 	USLOSS_Console("writePage(): 1.\n");
 
@@ -667,7 +700,17 @@ void writePage(int page, PTE * pageTable) {
 	//unit, track, first, sectors, buffer
 	diskWriteReal(1, trackNumber, firstSector, numSectors, buff);
 	USLOSS_Console("writePage(): 2.\n");
+
+	mmuStatus = USLOSS_MmuUnmap(TAG, page);
+	if (mmuStatus != USLOSS_MMU_OK){
+		if (debugFlag5){
+			USLOSS_Console("Pager(): mmu map failed\n");
+		}
+		Terminate(1);
+	}
+
 	pageTable[page].diskBlock = diskBlock;
+	diskTable[diskBlock] = OCCUPIED;
 	vmStats.pageOuts++;
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): done.\n");
