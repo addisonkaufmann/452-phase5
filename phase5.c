@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 0;
+int debugFlag5 = 1;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -571,7 +571,7 @@ static int Pager(char *buf)
 			PTE* pageTable = procTable[prevPid].pageTable;
 			pageTable[prevPageNumber].frame = -1;
 			pageTable[prevPageNumber].state = ONDISK; //TODO: acutally put it on disk...
-			//writePage(prevPageNumber, pageTable);
+			writePage(prevPageNumber, pageTable);
 			if (debugFlag5){
 				USLOSS_Console("Pager(): Wrote page %d to disk.\n", prevPageNumber);
 			}
@@ -648,7 +648,7 @@ void writePage(int page, PTE * pageTable) {
 	}
 	char buff[USLOSS_MmuPageSize()];
 	USLOSS_Console("writePage(): .5.\n");
-	memcpy(buff, vmRegion, USLOSS_MmuPageSize());
+	memcpy(buff, vmRegion + page * USLOSS_MmuPageSize(), USLOSS_MmuPageSize());
 	USLOSS_Console("writePage(): 1.\n");
 	diskWriteReal(1, diskBlock, 0, 8, buff);
 	USLOSS_Console("writePage(): 2.\n");
