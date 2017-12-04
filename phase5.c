@@ -650,7 +650,22 @@ void writePage(int page, PTE * pageTable) {
 	USLOSS_Console("writePage(): .5.\n");
 	memcpy(buff, vmRegion + page * USLOSS_MmuPageSize(), USLOSS_MmuPageSize());
 	USLOSS_Console("writePage(): 1.\n");
-	diskWriteReal(1, diskBlock, 0, 8, buff);
+
+	int bytesPerSector; 
+	int sectorsPerTrack; 
+	int tracksPerUnit;
+
+	diskSizeReal(1, &bytesPerSector, &sectorsPerTrack, &tracksPerUnit);
+
+	long blockAddress = diskBlock * USLOSS_MmuPageSize();
+	//between 0 and sector*track*disk/pagesize
+	int trackNumber = blockAddress / tracksPerUnit; //numtracks
+	int firstSector = (blockAddress % tracksPerUnit) / sectorsPerTrack;
+	int numSectors = USLOSS_MmuPageSize() / bytesPerSector;
+
+
+	//unit, track, first, sectors, buffer
+	diskWriteReal(1, trackNumber, firstSector, numSectors, buff);
 	USLOSS_Console("writePage(): 2.\n");
 	pageTable[page].diskBlock = diskBlock;
 	vmStats.pageOuts++;
