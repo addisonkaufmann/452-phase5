@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 0;
+int debugFlag5 = 1;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -49,6 +49,10 @@ void printFrameTable();
 void printPageTable(int pid);
 void writePage(int page, PTE * pageTable, int frameIndex);
 int diskSweep();
+int isDirty();
+int isReferenced();
+void setDirty();
+void setReferenced();
 
 void * vmRegion; 
 static Process procTable[MAXPROC];
@@ -570,13 +574,16 @@ static int Pager(char *buf)
 				/* clock algorithm */	
 			}	
 			frameIndex = clockSweep();
-			int access;
-			int status = USLOSS_MmuGetAccess(frameIndex, &access);
-			if (status != USLOSS_MMU_OK) {
-				USLOSS_Console("Pager(): Could not get access bit.\n");
-				Terminate(1);
-			}
-			if (access == USLOSS_MMU_DIRTY){
+			// int access = 0;
+			// int status = USLOSS_MmuGetAccess(frameIndex, &access);
+			// if (debugFlag5){
+			// 		USLOSS_Console("Pager(): access = %d, %d\n", access, USLOSS_MMU_DIRTY);
+			// 	}
+			// if (status != USLOSS_MMU_OK) {
+			// 	USLOSS_Console("Pager(): Could not get access bit.\n");
+			// 	Terminate(1);
+			// }
+			if (isDirty(frameIndex)){
 				if (debugFlag5){
 					USLOSS_Console("Pager(): the frame we found is dirty, writing to disk\n");
 				}
@@ -615,7 +622,7 @@ static int Pager(char *buf)
 		frameTable[frameIndex].state = OCCUPIED;
 		frameTable[frameIndex].pid = fault->pid;
 		frameTable[frameIndex].page = pageNumber;
-		frameTable[frameIndex].referenced = 1;
+		// frameTable[frameIndex].referenced = 1;
 
 		// USLOSS_Console("Pager(): Updating pager's page table so that page %d is in frame %d.\n", pageNumber, frameIndex);
 		// PTE * pageTable = procTable[getpid() % MAXPROC].pageTable;
@@ -636,6 +643,10 @@ static int Pager(char *buf)
 
 		// memset or TODO: get info from disk
 		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize());
+		if (debugFlag5){
+			USLOSS_Console("Pager(): doing memset on frame %d, setting dirty to false\n", frameIndex);
+		}
+		setDirty(frameIndex, 0);
 		//you cannot write to a frame if the frame is not mapped to a page
 
 		mmuStatus = USLOSS_MmuUnmap(TAG, pageNumber);
@@ -682,7 +693,9 @@ void writePage(int page, PTE * pageTable, int frameIndex) {
 		Terminate(1);
 	}
 	memcpy(buff, vmRegion + page * USLOSS_MmuPageSize(), USLOSS_MmuPageSize());
-	USLOSS_Console("writePage(): 1.\n");
+	if (debugFlag5) {
+		USLOSS_Console("writePage(): finished memcpy\n");
+	}
 
 	int bytesPerSector; 
 	int sectorsPerTrack; 
@@ -699,7 +712,9 @@ void writePage(int page, PTE * pageTable, int frameIndex) {
 
 	//unit, track, first, sectors, buffer
 	diskWriteReal(1, trackNumber, firstSector, numSectors, buff);
-	USLOSS_Console("writePage(): 2.\n");
+	if (debugFlag5) {
+		USLOSS_Console("writePage(): finished diskWrite\n");
+	}
 
 	mmuStatus = USLOSS_MmuUnmap(TAG, page);
 	if (mmuStatus != USLOSS_MMU_OK){
@@ -726,6 +741,57 @@ int diskSweep() {
 	return -1;
 }
 
+int isReferenced(int frame){
+	int access;
+	int status = USLOSS_MmuGetAccess(frame, &access);
+	if (status != USLOSS_MMU_OK) {
+		USLOSS_Console("Could not get access bit.\n");
+		Terminate(1);
+	}
+	if (access == 0 || access == 2)
+		return 0;
+	else 
+		return 1;
+}
+
+void setReferenced(int frame, int val){
+	int bits = val;
+	if (isDirty(frame)){
+		bits += 2;
+	}
+	int status = USLOSS_MmuSetAccess(frame, bits);
+	if (status != USLOSS_MMU_OK) {
+		USLOSS_Console("Could not set access bit.\n");
+		Terminate(1);
+	}
+}
+
+int isDirty(int frame){
+	int access;
+	int status = USLOSS_MmuGetAccess(frame, &access);
+	if (status != USLOSS_MMU_OK) {
+		USLOSS_Console("Could not get access bit.\n");
+		Terminate(1);
+	}
+	if (access == 1 || access == 0)
+		return 0;
+	else 
+		return 1;
+}
+
+void setDirty(int frame, int val){
+	int bits = val;
+	if (isReferenced(frame)){
+		bits++;
+	}
+	int status = USLOSS_MmuSetAccess(frame, bits);
+	if (status != USLOSS_MMU_OK) {
+		USLOSS_Console("Could not set access bit.\n");
+		Terminate(1);
+	}
+}
+
+
 int clockSweep(){
 
 	//iterate from 0 or starting index (from last clock run) through all frames
@@ -744,8 +810,8 @@ int clockSweep(){
 	//loop over each frame, set referenced to false, find first unreferenced
 	int i = startingFrame; 
 	for (int x = 0; x < numFrames; x++){ //loop through all the frames
-		if (frameTable[i].referenced){
-			frameTable[i].referenced = 0;
+		if (isReferenced(i)){
+			setReferenced(i, 0);
 		} else {
 			startingFrame = (i+1)%numFrames;
 			if (debugFlag5){
@@ -762,7 +828,7 @@ int clockSweep(){
 	}
 
 	for (int j = 0; j < numFrames; j++){
-		if (frameTable[j].clean){
+		if (!isDirty(j)){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
 			}
