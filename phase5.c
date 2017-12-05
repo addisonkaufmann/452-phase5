@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 0;
+int debugFlag5 = 1;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -634,27 +634,26 @@ static int Pager(char *buf)
 
 		PTE * faultingPageTable = procTable[fault->pid % MAXPROC].pageTable;
 		if (faultingPageTable[pageNumber].state == ONDISK){
-			//TODO: pageIns++
+			// pageIns++
 			vmStats.pageIns++;
 			if (debugFlag5){
 				USLOSS_Console("Pager(): the page we're referencing is ONDISK (block %d), reading disk instead of memset\n", faultingPageTable[pageNumber].diskBlock);
 			}
-			//TODO: read disk
+			// read disk
 			char * dest = (char *)((long)vmRegion + (long)fault->addr);
 			int diskBlock = faultingPageTable[pageNumber].diskBlock;
 			readPage(dest, diskBlock);
 
-
-
-
 		} else {
 
-			// memset or TODO: get info from disk
+			// memset to zero out
 			memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize());
 			if (debugFlag5){
 				USLOSS_Console("Pager(): doing memset on frame %d, setting dirty to false\n", frameIndex);
 			}
 		}
+
+		//set dirty to false
 		setDirty(frameIndex, 0);
 		//you cannot write to a frame if the frame is not mapped to a page
 
@@ -719,7 +718,7 @@ void writePage(int page, PTE * pageTable, int frameIndex) {
 	}
 	int diskBlock = diskSweep();
 	if (debugFlag5) {
-		USLOSS_Console("writePage(): writing page %d\n", diskBlock);
+		USLOSS_Console("writePage(): writing page %d to block %d\n", page, diskBlock);
 	}
 	if (diskBlock == -1) {
 		USLOSS_Console("Pager(): disk full.\n");
@@ -848,7 +847,9 @@ int clockSweep(){
 	//first check referenced
 	//if everyone's been referenced then loop again check clean vs. dirty
 
-
+	if (debugFlag5){
+		USLOSS_Console("Pager(): starting clockSweep at frame %d\n", startingFrame);
+	}
 	//loop over each frame, set referenced to false, find first unreferenced
 	int i = startingFrame; 
 	for (int x = 0; x < numFrames; x++){ //loop through all the frames
@@ -935,7 +936,7 @@ void initFrameTable(int frames){
 void printFrameTable() {
 	USLOSS_Console("\nFrame table:\n");
 	for (int i = 0; i < numFrames; i++) {
-		USLOSS_Console("Index: %d\tPID: %d\tPage: %d\tState: %d\tClean: %d\tReferenced: %d\n", i, frameTable[i].pid, frameTable[i].page, frameTable[i].state, frameTable[i].clean, frameTable[i].referenced);
+		USLOSS_Console("Index: %d\tPID: %d\tPage: %d\tState: %d\tDirty: %d\tReferenced: %d\n", i, frameTable[i].pid, frameTable[i].page, frameTable[i].state, isDirty(i), isReferenced(i));
 	}
 	USLOSS_Console("\n");
 }
