@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 1;
+int debugFlag5 = 0;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -53,6 +53,7 @@ int isDirty();
 int isReferenced();
 void setDirty();
 void setReferenced();
+void readPage();
 
 void * vmRegion; 
 static Process procTable[MAXPROC];
@@ -574,15 +575,7 @@ static int Pager(char *buf)
 				/* clock algorithm */	
 			}	
 			frameIndex = clockSweep();
-			// int access = 0;
-			// int status = USLOSS_MmuGetAccess(frameIndex, &access);
-			// if (debugFlag5){
-			// 		USLOSS_Console("Pager(): access = %d, %d\n", access, USLOSS_MMU_DIRTY);
-			// 	}
-			// if (status != USLOSS_MMU_OK) {
-			// 	USLOSS_Console("Pager(): Could not get access bit.\n");
-			// 	Terminate(1);
-			// }
+
 			if (isDirty(frameIndex)){
 				if (debugFlag5){
 					USLOSS_Console("Pager(): the frame we found is dirty, writing to disk\n");
@@ -592,8 +585,8 @@ static int Pager(char *buf)
 				int prevPageNumber = frameTable[frameIndex].page;
 				PTE* pageTable = procTable[prevPid].pageTable;
 				pageTable[prevPageNumber].frame = -1;
-				pageTable[prevPageNumber].state = ONDISK; //TODO: acutally put it on disk...
-				writePage(prevPageNumber, pageTable, frameIndex);
+				pageTable[prevPageNumber].state = ONDISK; 
+				writePage(prevPageNumber, pageTable, frameIndex); //actually put it on disk
 				if (debugFlag5){
 					USLOSS_Console("Pager(): Wrote page %d to disk.\n", prevPageNumber);
 				}
@@ -615,14 +608,12 @@ static int Pager(char *buf)
 		/* Load page into frame from disk, if necessary */
 		//if page is ONDISK
 
-
 		int pageNumber = ((long)fault->addr) / USLOSS_MmuPageSize();
 
 		/* say the the pager "has" this frame, (change status in frame table) */
 		frameTable[frameIndex].state = OCCUPIED;
 		frameTable[frameIndex].pid = fault->pid;
 		frameTable[frameIndex].page = pageNumber;
-		// frameTable[frameIndex].referenced = 1;
 
 		// USLOSS_Console("Pager(): Updating pager's page table so that page %d is in frame %d.\n", pageNumber, frameIndex);
 		// PTE * pageTable = procTable[getpid() % MAXPROC].pageTable;
@@ -641,10 +632,28 @@ static int Pager(char *buf)
 			Terminate(1);
 		}
 
-		// memset or TODO: get info from disk
-		memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize());
-		if (debugFlag5){
-			USLOSS_Console("Pager(): doing memset on frame %d, setting dirty to false\n", frameIndex);
+		PTE * faultingPageTable = procTable[fault->pid % MAXPROC].pageTable;
+		if (faultingPageTable[pageNumber].state == ONDISK){
+			//TODO: pageIns++
+			vmStats.pageIns++;
+			if (debugFlag5){
+				USLOSS_Console("Pager(): the page we're referencing is ONDISK (block %d), reading disk instead of memset\n", faultingPageTable[pageNumber].diskBlock);
+			}
+			//TODO: read disk
+			char * dest = (char *)((long)vmRegion + (long)fault->addr);
+			int diskBlock = faultingPageTable[pageNumber].diskBlock;
+			readPage(dest, diskBlock);
+
+
+
+
+		} else {
+
+			// memset or TODO: get info from disk
+			memset( (char *)((long)vmRegion + (long)fault->addr), 0, USLOSS_MmuPageSize());
+			if (debugFlag5){
+				USLOSS_Console("Pager(): doing memset on frame %d, setting dirty to false\n", frameIndex);
+			}
 		}
 		setDirty(frameIndex, 0);
 		//you cannot write to a frame if the frame is not mapped to a page
@@ -674,12 +683,44 @@ static int Pager(char *buf)
 	return 0;
 } /* Pager */
 
+void readPage(char * dest, int diskBlock){
+	if (debugFlag5) {
+		USLOSS_Console("readPage(): called to read block %d\n", diskBlock);
+	}
+	char buff[USLOSS_MmuPageSize()];
+
+	int bytesPerSector, sectorsPerTrack, tracksPerUnit;
+
+	diskSizeReal(1, &bytesPerSector, &sectorsPerTrack, &tracksPerUnit);
+
+	int bytesPerTrack = bytesPerSector * sectorsPerTrack;
+
+
+	long blockAddress = diskBlock * USLOSS_MmuPageSize();
+	int trackNumber = blockAddress / bytesPerTrack;
+	int firstSector = (blockAddress % bytesPerTrack) / bytesPerSector;
+	int numSectors = USLOSS_MmuPageSize() / bytesPerSector;
+
+	//unit, track, first, sectors, buffer
+	int status = diskReadReal(1, trackNumber, firstSector, numSectors, buff);
+	if (debugFlag5) {
+		USLOSS_Console("readPage(): finished diskRead status = %d to unit %d, track %d, firstSector %d, numSectors %d (block %d)\n", status, 1, trackNumber, firstSector, numSectors, diskBlock);
+	}
+	memcpy(dest, buff, USLOSS_MmuPageSize());
+	if (debugFlag5) {
+		USLOSS_Console("readPage(): finished memcpy\n");
+	}
+}
+
 
 void writePage(int page, PTE * pageTable, int frameIndex) {
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): called.\n");
 	}
 	int diskBlock = diskSweep();
+	if (debugFlag5) {
+		USLOSS_Console("writePage(): writing page %d\n", diskBlock);
+	}
 	if (diskBlock == -1) {
 		USLOSS_Console("Pager(): disk full.\n");
 		Terminate(1);
@@ -697,23 +738,24 @@ void writePage(int page, PTE * pageTable, int frameIndex) {
 		USLOSS_Console("writePage(): finished memcpy\n");
 	}
 
-	int bytesPerSector; 
-	int sectorsPerTrack; 
-	int tracksPerUnit;
+	int bytesPerSector, sectorsPerTrack, tracksPerUnit;
 
 	diskSizeReal(1, &bytesPerSector, &sectorsPerTrack, &tracksPerUnit);
 
+	int bytesPerTrack = bytesPerSector * sectorsPerTrack;
+
+
 	long blockAddress = diskBlock * USLOSS_MmuPageSize();
-	//between 0 and sector*track*disk/pagesize
-	int trackNumber = blockAddress / tracksPerUnit; //numtracks
-	int firstSector = (blockAddress % tracksPerUnit) / sectorsPerTrack;
+	int trackNumber = blockAddress / bytesPerTrack;
+	int firstSector = (blockAddress % bytesPerTrack) / bytesPerSector;
 	int numSectors = USLOSS_MmuPageSize() / bytesPerSector;
 
 
+
 	//unit, track, first, sectors, buffer
-	diskWriteReal(1, trackNumber, firstSector, numSectors, buff);
+	int status = diskWriteReal(1, trackNumber, firstSector, numSectors, buff);
 	if (debugFlag5) {
-		USLOSS_Console("writePage(): finished diskWrite\n");
+		USLOSS_Console("writePage(): finished diskWrite status = %d to unit %d, track %d, firstSector %d, numSectors %d (block %d)\n", status, 1, trackNumber, firstSector, numSectors, diskBlock);
 	}
 
 	mmuStatus = USLOSS_MmuUnmap(TAG, page);
