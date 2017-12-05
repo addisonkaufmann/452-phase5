@@ -264,7 +264,7 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	/* 
 	* Create the fault mailbox.
 	*/
-	faultMbox = MboxCreate(1, 0);
+	faultMbox = MboxCreate(0, 0); //FIXME: 1?
 
 	/*
 	* Fork the pagers.
@@ -520,7 +520,8 @@ static void FaultHandler(int type /* MMU_INT */,
 		printPageTable(me->pid);
 	}
 
-	//unlock the frame (set to INCORE or something)
+	//unlock the frame??
+
 
 	return;
 
@@ -922,7 +923,7 @@ void initProcTable() {
         procTable[i].numPages = -1;
         //procTable[i].semId = semcreateReal(0);
        	//Mbox_Create(1, 0, &procTable[i].faultMbox);
-       	procTable[i].faultMbox = MboxCreate(1,sizeof(int));
+       	procTable[i].faultMbox = MboxCreate(0,sizeof(int)); //FIXME: 1?
     }
 }
 
