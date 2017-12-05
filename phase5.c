@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 1;
+int debugFlag5 = 0;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -865,21 +865,27 @@ int clockSweep(){
 		i = (i+1)%numFrames;
 	}
 
-	//no unreferenced frames, find clean frame
 	if (debugFlag5){
-		USLOSS_Console("Pager(): all frames are referenced, have to check clean/dirty\n");
+		USLOSS_Console("Pager(): all frames referenced, returning startingFrame = %d\n", i);
 	}
+	startingFrame = (startingFrame + 1)%numFrames;
+	return i;
 
-	for (int j = 0; j < numFrames; j++){
-		if (!isDirty(j)){
-			if (debugFlag5){
-				USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
-			}
-			startingFrame = (j+1)%numFrames;
-			return j;
-		}
-	}
-	return 0;
+	//no unreferenced frames, find clean frame
+	// if (debugFlag5){
+	// 	USLOSS_Console("Pager(): all frames are referenced, have to check clean/dirty\n");
+	// }
+
+	// for (int j = 0; j < numFrames; j++){
+	// 	if (!isDirty(j)){
+	// 		if (debugFlag5){
+	// 			USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
+	// 		}
+	// 		startingFrame = (j+1)%numFrames;
+	// 		return j;
+	// 	}
+	// }
+	// return 0;
 }
 
 int scanForFrame(){
