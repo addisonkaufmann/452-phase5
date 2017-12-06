@@ -1,5 +1,5 @@
 /*
- * skeleton.c
+ * pahse5.c
  *
  * This is a skeleton for phase5 of the programming assignment. It
  * doesn't do much -- it is just intended to get you started.
@@ -18,7 +18,7 @@
 #include <vm.h>
 #include <string.h>
 
-int debugFlag5 = 0;
+int debugFlag5 = 1;
 
 extern int Mbox_Create(int numslots, int slotsize, int *mboxID);
 extern void mbox_create(USLOSS_Sysargs *args_ptr);
@@ -69,6 +69,7 @@ int faultMbox;
 int * pagerPids;
 int numPagers;
 int statsMutex;
+int fTableMutex;
 int initialized;
 int destroy = 0;
 
@@ -107,6 +108,9 @@ int start4(char *arg)
 	systemCallVec[SYS_MBOXRECEIVE]     = mbox_receive;
 	systemCallVec[SYS_MBOXCONDSEND]    = mbox_condsend;
 	systemCallVec[SYS_MBOXCONDRECEIVE] = mbox_condreceive;
+
+	Mbox_Create(1, 0, &statsMutex);
+	Mbox_Create(1, 0, &fTableMutex);
 
 	/* user-process access to VM functions */
 	systemCallVec[SYS_VMINIT]    = vmInit;
@@ -429,7 +433,11 @@ static void FaultHandler(int type /* MMU_INT */,
 	assert(type == USLOSS_MMU_INT);
 	cause = USLOSS_MmuGetCause();
 	assert(cause == USLOSS_MMU_FAULT);
+
+	MboxSend(statsMutex, NULL, 0);
 	vmStats.faults++;
+	MboxReceive(statsMutex, NULL, 0);
+
 
 	if (debugFlag5) {
 		USLOSS_Console("faults now = %d\n", vmStats.faults);
@@ -499,7 +507,9 @@ static void FaultHandler(int type /* MMU_INT */,
 	}
 	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
 	if (me->pageTable[pageNumber].state == UNUSED) {
+		MboxSend(statsMutex, NULL, 0);
 		vmStats.new++;
+		MboxReceive(statsMutex, NULL, 0);
 		//writePage(pageNumber, me->pageTable, myframe);
 	}
 	me->pageTable[pageNumber].frame = myframe;
@@ -566,6 +576,7 @@ static int Pager(char *buf)
 		}
 
 		/* find the frame that we're gonna use */
+		MboxSend(fTableMutex, NULL, 0);
 		int frameIndex = scanForFrame();
 
 		/* If there isn't one then use clock algorithm to
@@ -602,7 +613,9 @@ static int Pager(char *buf)
 			if (debugFlag5){
 				USLOSS_Console("Pager(): available frame at index %d\n", frameIndex);
 			}
+			MboxSend(statsMutex, NULL, 0);
 			vmStats.freeFrames--;
+			MboxReceive(statsMutex, NULL, 0);
 		}
 
 
@@ -615,6 +628,7 @@ static int Pager(char *buf)
 		frameTable[frameIndex].state = OCCUPIED;
 		frameTable[frameIndex].pid = fault->pid;
 		frameTable[frameIndex].page = pageNumber;
+		MboxReceive(fTableMutex, NULL, 0);
 
 		// USLOSS_Console("Pager(): Updating pager's page table so that page %d is in frame %d.\n", pageNumber, frameIndex);
 		// PTE * pageTable = procTable[getpid() % MAXPROC].pageTable;
@@ -636,7 +650,9 @@ static int Pager(char *buf)
 		PTE * faultingPageTable = procTable[fault->pid % MAXPROC].pageTable;
 		if (faultingPageTable[pageNumber].state == ONDISK){
 			// pageIns++
+			MboxSend(statsMutex, NULL, 0);
 			vmStats.pageIns++;
+			MboxReceive(statsMutex, NULL, 0);
 			if (debugFlag5){
 				USLOSS_Console("Pager(): the page we're referencing is ONDISK (block %d), reading disk instead of memset\n", faultingPageTable[pageNumber].diskBlock);
 			}
@@ -768,7 +784,9 @@ void writePage(int page, PTE * pageTable, int frameIndex) {
 
 	pageTable[page].diskBlock = diskBlock;
 	diskTable[diskBlock] = OCCUPIED;
+	MboxSend(statsMutex, NULL, 0);
 	vmStats.pageOuts++;
+	MboxReceive(statsMutex, NULL, 0);
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): done.\n");
 	}
@@ -923,7 +941,7 @@ void initProcTable() {
         procTable[i].numPages = -1;
         //procTable[i].semId = semcreateReal(0);
        	//Mbox_Create(1, 0, &procTable[i].faultMbox);
-       	procTable[i].faultMbox = MboxCreate(0,sizeof(int)); //FIXME: 1?
+       	procTable[i].faultMbox = MboxCreate(0,sizeof(int)); 
     }
 }
 

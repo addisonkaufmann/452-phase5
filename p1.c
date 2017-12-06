@@ -16,7 +16,7 @@ int p1debug = 0;
 
 extern Process * getProc();
 extern int initialized;
-
+extern int statsMutex;
 
 void
 p1_fork(int pid)
@@ -53,7 +53,9 @@ p1_switch(int old, int new)
     if (p1debug)
         USLOSS_Console("p1_switch() called: old = %d, new = %d\n", old, new);
     if (initialized){
+        MboxSend(statsMutex, NULL, 0);
         vmStats.switches++;
+        MboxReceive(statsMutex, NULL, 0);
     
 
         Process* oldProc = getProc(old);
@@ -166,7 +168,9 @@ p1_quit(int pid)
                     //Terminate(1);
                 }
                 if (!otherProcsUsingFrame(pid, me->pageTable[i].frame)) {
+                    MboxSend(statsMutex, NULL, 0);
                     vmStats.freeFrames++;
+                    MboxReceive(statsMutex, NULL, 0);
                 }
             }
         }
