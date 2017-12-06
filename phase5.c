@@ -1,8 +1,9 @@
 /*
  * pahse5.c
  *
- * This is a skeleton for phase5 of the programming assignment. It
- * doesn't do much -- it is just intended to get you started.
+ * This is the code for phase5 of the programming assignment. It
+ * doesn't do much -- but we tried. This pahse implements virtual memory for 
+ * user processes.
  */
 
 #include <usloss.h>
@@ -62,7 +63,7 @@ FaultMsg faults[MAXPROC]; /* Note that a process can have only
 													 * one fault at a time, so we can
 													 * allocate the messages statically
 													 * and index them by pid. */
-VmStats  vmStats;
+VmStats  vmStats; // Tracks stats like context switches, number of free frames, etc.
 FTE* frameTable;
 int numFrames;
 int faultMbox;
@@ -70,8 +71,8 @@ int * pagerPids;
 int numPagers;
 int statsMutex;
 int fTableMutex;
-int initialized;
-int destroy = 0;
+int initialized; // Boolean of whether vmInit has been completed
+int destroy = 0; // Boolean used to kill the pagers upon vmDestroy
 
 FaultMsg* faultQueue;
 int * diskTable;
@@ -109,6 +110,7 @@ int start4(char *arg)
 	systemCallVec[SYS_MBOXCONDSEND]    = mbox_condsend;
 	systemCallVec[SYS_MBOXCONDRECEIVE] = mbox_condreceive;
 
+	// Initialize mailboxes used for mutex
 	Mbox_Create(1, 0, &statsMutex);
 	Mbox_Create(1, 0, &fTableMutex);
 
@@ -243,6 +245,7 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 		USLOSS_Console("vmInitReal(): called and passed by error handeling.\n");
 	}
 
+	// Initialize the MMU
 	status = USLOSS_MmuInit(mappings, pages, frames, USLOSS_MMU_MODE_TLB);
 	if (status != USLOSS_MMU_OK) {
 		USLOSS_Console("vmInitReal: couldn't initialize MMU, status %d\n", status);
@@ -251,7 +254,7 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	USLOSS_IntVec[USLOSS_MMU_INT] = FaultHandler;
 	
 	/*
-	* Initialize the frame table.
+	* Initialize the frame and process table.
 	*/
 	initProcTable();
 	initFrameTable(frames);
@@ -268,7 +271,7 @@ void * vmInitReal(int mappings, int pages, int frames, int pagers)
 	/* 
 	* Create the fault mailbox.
 	*/
-	faultMbox = MboxCreate(0, 0); //FIXME: 1?
+	faultMbox = MboxCreate(0, 0);
 
 	/*
 	* Fork the pagers.
@@ -381,6 +384,8 @@ void vmDestroyReal(void)
 	}
 
 	CheckMode();
+
+	// Tell USLOSS we are done with the MMU
 	int mmu = USLOSS_MmuDone();
 	if (mmu != USLOSS_MMU_OK){
 		USLOSS_Console("vmDestroyReal(): USLOSS MMU error. Terminating...\n");
@@ -422,7 +427,7 @@ void vmDestroyReal(void)
  *----------------------------------------------------------------------
  */
 static void FaultHandler(int type /* MMU_INT */,
-						 void * offset  /* Offset within VM region */)  //FIXME: not sure if void* or int?
+						 void * offset  /* Offset within VM region */) 
 {
 	if (debugFlag5) {
 		USLOSS_Console("FaultHandler%d(): called by pid %d,", getpid(), getpid());
@@ -434,6 +439,7 @@ static void FaultHandler(int type /* MMU_INT */,
 	cause = USLOSS_MmuGetCause();
 	assert(cause == USLOSS_MMU_FAULT);
 
+	// Acquire mutex on global variable vmStats before incrementing the faults count
 	MboxSend(statsMutex, NULL, 0);
 	vmStats.faults++;
 	MboxReceive(statsMutex, NULL, 0);
@@ -481,7 +487,7 @@ static void FaultHandler(int type /* MMU_INT */,
 		USLOSS_Console("FaultHandler%d(): blocking to wait for a pager to process the fault (mbox %d)\n", getpid(), procTable[pid].faultMbox);
 	}
 
-	//which frame did I get?
+	// Which frame did I get?
 	int myframe;
 	MboxReceive(procTable[pid].faultMbox, &myframe, sizeof(int));
 
@@ -489,9 +495,13 @@ static void FaultHandler(int type /* MMU_INT */,
 		USLOSS_Console("FaultHandler%d(): woke up after fault, given frame #%d by pager\n", getpid(), myframe);
 	}
 
-	//update MY pagetable
+	/*
+	* Update MY pagetable
+	*/
 	Process* me = getProc(getpid());
-	for(int i = 0; i < me->numPages; ++i) { // Check if we are swapping a page already in frame with the new one. If so, update that old page to have no frame.
+	// First, check if we are swapping a page already in frame with the new one. 
+	// If so, update that old page to have no frame.
+	for(int i = 0; i < me->numPages; ++i) { 
 		if (me->pageTable[i].frame == myframe) {
 			me->pageTable[i].frame = -1;
 			me->pageTable[i].state = OCCUPIED;
@@ -505,18 +515,17 @@ static void FaultHandler(int type /* MMU_INT */,
 			break;
 		}
 	}
+	// Then, set your entry in the pagetable to have the given frame.
 	int pageNumber = ((long)offset) / USLOSS_MmuPageSize();
 	if (me->pageTable[pageNumber].state == UNUSED) {
 		MboxSend(statsMutex, NULL, 0);
 		vmStats.new++;
 		MboxReceive(statsMutex, NULL, 0);
-		//writePage(pageNumber, me->pageTable, myframe);
 	}
 	me->pageTable[pageNumber].frame = myframe;
-	me->pageTable[pageNumber].state = INFRAME; //FIXME: not sure
+	me->pageTable[pageNumber].state = INFRAME;
 
-
-
+	// Finally, map the page to the frame given to us by the Pager
 	int mmuStatus = USLOSS_MmuMap(TAG, pageNumber, myframe, USLOSS_MMU_PROT_RW );
 	if (mmuStatus != USLOSS_MMU_OK){
 		if (debugFlag5){
@@ -561,7 +570,6 @@ static int Pager(char *buf)
 		if (isZapped()){
 			return 1;
 		}
-		
 
 		/* Pop message from faultqueue */
 		FaultMsg* fault = faultQueue;
@@ -575,7 +583,7 @@ static int Pager(char *buf)
 			USLOSS_Console("Pager%d(): woke up with fault from pid %d\n", getpid(), fault->pid);
 		}
 
-		/* find the frame that we're gonna use */
+		/* Find the frame that we're gonna use */
 		MboxSend(fTableMutex, NULL, 0);
 		int frameIndex = scanForFrame();
 
@@ -584,15 +592,15 @@ static int Pager(char *buf)
 		if (frameIndex == -1){
 			if (debugFlag5){
 				USLOSS_Console("Pager(): no frames available, have to do page replacement\n");
-				/* clock algorithm */	
 			}	
+			/* clock algorithm */	
 			frameIndex = clockSweep();
 
 			if (isDirty(frameIndex)){
 				if (debugFlag5){
 					USLOSS_Console("Pager(): the frame we found is dirty, writing to disk\n");
 				}
-				// Write page in frame to disk
+				// Write the page already in frame to disk
 				int prevPid = frameTable[frameIndex].pid;
 				int prevPageNumber = frameTable[frameIndex].page;
 				PTE* pageTable = procTable[prevPid].pageTable;
@@ -630,15 +638,11 @@ static int Pager(char *buf)
 		frameTable[frameIndex].page = pageNumber;
 		MboxReceive(fTableMutex, NULL, 0);
 
-		// USLOSS_Console("Pager(): Updating pager's page table so that page %d is in frame %d.\n", pageNumber, frameIndex);
-		// PTE * pageTable = procTable[getpid() % MAXPROC].pageTable;
-		// pageTable[pageNumber].frame = frameIndex;
-
 		if (debugFlag5) {
 			printFrameTable();
 		}
 
-		/* do the mapping and copy info */
+		/* Do the mapping and copy info */
 		int mmuStatus = USLOSS_MmuMap(TAG, pageNumber, frameIndex, USLOSS_MMU_PROT_RW );
 		if (mmuStatus != USLOSS_MMU_OK){
 			if (debugFlag5){
@@ -647,6 +651,7 @@ static int Pager(char *buf)
 			Terminate(1);
 		}
 
+		// Either read in the page from disk if it is on disk, or memset to zero out if it is an entirely new page
 		PTE * faultingPageTable = procTable[fault->pid % MAXPROC].pageTable;
 		if (faultingPageTable[pageNumber].state == ONDISK){
 			// pageIns++
@@ -656,7 +661,7 @@ static int Pager(char *buf)
 			if (debugFlag5){
 				USLOSS_Console("Pager(): the page we're referencing is ONDISK (block %d), reading disk instead of memset\n", faultingPageTable[pageNumber].diskBlock);
 			}
-			// read disk
+			// Read disk
 			char * dest = (char *)((long)vmRegion + (long)fault->addr);
 			int diskBlock = faultingPageTable[pageNumber].diskBlock;
 			readPage(dest, diskBlock);
