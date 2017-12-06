@@ -704,29 +704,37 @@ static int Pager(char *buf)
 	return 0;
 } /* Pager */
 
+
+/*
+Calls diskRead to read a page from the given diskBlock into the
+given destinations pointer
+*/
 void readPage(char * dest, int diskBlock){
 	if (debugFlag5) {
 		USLOSS_Console("readPage(): called to read block %d\n", diskBlock);
 	}
+
+	//temp storage buffer
 	char buff[USLOSS_MmuPageSize()];
 
+	//get disk size info
 	int bytesPerSector, sectorsPerTrack, tracksPerUnit;
-
 	diskSizeReal(1, &bytesPerSector, &sectorsPerTrack, &tracksPerUnit);
 
+	//parse diskblock number into sector, track, etc.
 	int bytesPerTrack = bytesPerSector * sectorsPerTrack;
-
-
 	long blockAddress = diskBlock * USLOSS_MmuPageSize();
 	int trackNumber = blockAddress / bytesPerTrack;
 	int firstSector = (blockAddress % bytesPerTrack) / bytesPerSector;
 	int numSectors = USLOSS_MmuPageSize() / bytesPerSector;
 
-	//unit, track, first, sectors, buffer
+	//read from disk into temporary buffer
 	int status = diskReadReal(1, trackNumber, firstSector, numSectors, buff);
 	if (debugFlag5) {
 		USLOSS_Console("readPage(): finished diskRead status = %d to unit %d, track %d, firstSector %d, numSectors %d (block %d)\n", status, 1, trackNumber, firstSector, numSectors, diskBlock);
 	}
+
+	//copy temporary buffer into destination buffer
 	memcpy(dest, buff, USLOSS_MmuPageSize());
 	if (debugFlag5) {
 		USLOSS_Console("readPage(): finished memcpy\n");
@@ -734,19 +742,30 @@ void readPage(char * dest, int diskBlock){
 }
 
 
+/*
+Calls diskWrite to write a given page from a given pageTable
+*/
 void writePage(int page, PTE * pageTable, int frameIndex) {
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): called.\n");
 	}
+
+	//find an unused diskblock
 	int diskBlock = diskSweep();
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): writing page %d to block %d\n", page, diskBlock);
 	}
+
+	//terminate if disk is full
 	if (diskBlock == -1) {
 		USLOSS_Console("Pager(): disk full.\n");
 		Terminate(1);
 	}
+
+	//temporary buffer
 	char buff[USLOSS_MmuPageSize()];
+
+	//map to frame so we can access the page
 	int mmuStatus = USLOSS_MmuMap(TAG, page, frameIndex, USLOSS_MMU_PROT_RW );
 	if (mmuStatus != USLOSS_MMU_OK){
 		if (debugFlag5){
@@ -754,31 +773,31 @@ void writePage(int page, PTE * pageTable, int frameIndex) {
 		}
 		Terminate(1);
 	}
+
+	//copy the page into the temporary buffer
 	memcpy(buff, vmRegion + page * USLOSS_MmuPageSize(), USLOSS_MmuPageSize());
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): finished memcpy\n");
 	}
 
+	//get disk size info
 	int bytesPerSector, sectorsPerTrack, tracksPerUnit;
-
 	diskSizeReal(1, &bytesPerSector, &sectorsPerTrack, &tracksPerUnit);
 
+	//parse block number into disk sector, track, etc.
 	int bytesPerTrack = bytesPerSector * sectorsPerTrack;
-
-
 	long blockAddress = diskBlock * USLOSS_MmuPageSize();
 	int trackNumber = blockAddress / bytesPerTrack;
 	int firstSector = (blockAddress % bytesPerTrack) / bytesPerSector;
 	int numSectors = USLOSS_MmuPageSize() / bytesPerSector;
 
-
-
-	//unit, track, first, sectors, buffer
+	//call write from the tempbuffer into the disk
 	int status = diskWriteReal(1, trackNumber, firstSector, numSectors, buff);
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): finished diskWrite status = %d to unit %d, track %d, firstSector %d, numSectors %d (block %d)\n", status, 1, trackNumber, firstSector, numSectors, diskBlock);
 	}
 
+	//unmap the mapped page
 	mmuStatus = USLOSS_MmuUnmap(TAG, page);
 	if (mmuStatus != USLOSS_MMU_OK){
 		if (debugFlag5){
@@ -787,16 +806,26 @@ void writePage(int page, PTE * pageTable, int frameIndex) {
 		Terminate(1);
 	}
 
+	//update the page to indicate where it's stored
 	pageTable[page].diskBlock = diskBlock;
+
+	//update the disktable to indicate the block is in use
 	diskTable[diskBlock] = OCCUPIED;
+
+	//get stats mutex and update pageOuts
 	MboxSend(statsMutex, NULL, 0);
 	vmStats.pageOuts++;
 	MboxReceive(statsMutex, NULL, 0);
+
+	
 	if (debugFlag5) {
 		USLOSS_Console("writePage(): done.\n");
 	}
 }
 
+/*
+Scans the disks for free (UNUSED) blocks
+*/
 int diskSweep() {
 	for (int i = 0; i < vmStats.diskBlocks; ++i) {
 		if (diskTable[i] == UNUSED) {
@@ -806,24 +835,37 @@ int diskSweep() {
 	return -1;
 }
 
+/*
+Calls MMU to check the referenced bit of the given frame
+returns true or false
+*/
 int isReferenced(int frame){
 	int access;
+	//make MMU call
 	int status = USLOSS_MmuGetAccess(frame, &access);
 	if (status != USLOSS_MMU_OK) {
 		USLOSS_Console("Could not get access bit.\n");
 		Terminate(1);
 	}
+	//referenced = 1
 	if (access == 0 || access == 2)
 		return 0;
 	else 
 		return 1;
 }
 
+/*
+Calls MMU to set the referenced bit of the given frame to val
+*/
 void setReferenced(int frame, int val){
 	int bits = val;
+
+	//dirty = 2
 	if (isDirty(frame)){
 		bits += 2;
 	}
+
+	//make MMU call
 	int status = USLOSS_MmuSetAccess(frame, bits);
 	if (status != USLOSS_MMU_OK) {
 		USLOSS_Console("Could not set access bit.\n");
@@ -831,24 +873,41 @@ void setReferenced(int frame, int val){
 	}
 }
 
+
+/*
+Calls MMU to check the dirty bit for the given frame
+returns true or false
+*/
 int isDirty(int frame){
 	int access;
+
+	//make MMU Call
 	int status = USLOSS_MmuGetAccess(frame, &access);
 	if (status != USLOSS_MMU_OK) {
 		USLOSS_Console("Could not get access bit.\n");
 		Terminate(1);
 	}
+
+	//dirty = 2
 	if (access == 1 || access == 0)
 		return 0;
 	else 
 		return 1;
 }
 
+
+/*
+Calls MMU set access to set the frame's dirty bit to val
+*/
 void setDirty(int frame, int val){
 	int bits = val;
+
+	//referenced = 1
 	if (isReferenced(frame)){
 		bits++;
 	}
+
+	//make mmu call
 	int status = USLOSS_MmuSetAccess(frame, bits);
 	if (status != USLOSS_MMU_OK) {
 		USLOSS_Console("Could not set access bit.\n");
@@ -857,63 +916,57 @@ void setDirty(int frame, int val){
 }
 
 
+/*
+Do the clock algorithm to identify a page to replace.
+Find a frame that is unreferenced and all the scanned frames
+referenced bit to false.
+If no unreferenced frames, return the starting frame of that loop.
+*/
 int clockSweep(){
-
-	//iterate from 0 or starting index (from last clock run) through all frames
-		//if frame x referenced -> set to 0
-		//else frameIndex = x
-	//next clock starting point = x+1 % numFrames
-
-	//unreferenced and clean is our favorite page to replace
-		//hasn't been referenced since the last clock sweep
-		//hasn't been changed since it was last written to the disk
-
-	//first check referenced
-	//if everyone's been referenced then loop again check clean vs. dirty
 
 	if (debugFlag5){
 		USLOSS_Console("Pager(): starting clockSweep at frame %d\n", startingFrame);
 	}
 	//loop over each frame, set referenced to false, find first unreferenced
+
+	//loop over each frame, starting at startingFrame (from previous sweep)
 	int i = startingFrame; 
 	for (int x = 0; x < numFrames; x++){ //loop through all the frames
+
+		//if referenced, set referenced to falls
 		if (isReferenced(i)){
 			setReferenced(i, 0);
 		} else {
+			//found an unreferenced frame
+
+			//increment startingFrame for next sweep
 			startingFrame = (i+1)%numFrames;
 			if (debugFlag5){
 				USLOSS_Console("Pager(): found unreferenced frame #%d\n", i);
 			}
+
+			//return frame number
 			return i;
 		}
+		//circular increment back to startingFrame
 		i = (i+1)%numFrames;
 	}
 
 	if (debugFlag5){
 		USLOSS_Console("Pager(): all frames referenced, returning startingFrame = %d\n", i);
 	}
+	//increment startingFrame for next sweep
 	startingFrame = (startingFrame + 1)%numFrames;
+
+	//no unreferenced frames, return our startingFrame
 	return i;
-
-	//no unreferenced frames, find clean frame
-	// if (debugFlag5){
-	// 	USLOSS_Console("Pager(): all frames are referenced, have to check clean/dirty\n");
-	// }
-
-	// for (int j = 0; j < numFrames; j++){
-	// 	if (!isDirty(j)){
-	// 		if (debugFlag5){
-	// 			USLOSS_Console("Pager(): found referenced but clean frame #%d\n", i);
-	// 		}
-	// 		startingFrame = (j+1)%numFrames;
-	// 		return j;
-	// 	}
-	// }
-	// return 0;
 }
 
+/*
+Scans for frame with unused state
+*/
 int scanForFrame(){
-/* Look for free frame */
+	//loop through each frame, checking state
 	for (int i = 0; i < numFrames; i++){
 		if (frameTable[i].state == UNUSED){
 			return i;
@@ -930,6 +983,8 @@ int enterUserMode() {
     unsigned int psr = USLOSS_PsrGet();
     unsigned int op = 0xfffffffe;
     int result = USLOSS_PsrSet(psr & op);
+
+    //return error code
     if (result == USLOSS_ERR_INVALID_PSR) {
         return -1;
     }
@@ -938,49 +993,65 @@ int enterUserMode() {
     }
 }
 
+/*
+Creates the p5 proc table, each proc has a private mailbox
+status is UNUSED
+*/
 void initProcTable() {
     for (int i = 0; i < MAXPROC; ++i) {
         procTable[i].pid = -1;
         procTable[i].status = UNUSED;
         procTable[i].pageTable = NULL;
         procTable[i].numPages = -1;
-        //procTable[i].semId = semcreateReal(0);
-       	//Mbox_Create(1, 0, &procTable[i].faultMbox);
        	procTable[i].faultMbox = MboxCreate(0,sizeof(int)); 
     }
 }
 
+/*
+Create the frame table, state is UNUSED for each frame
+*/
 void initFrameTable(int frames){
 	numFrames = frames;
-	//malloc frametable
 	frameTable =(FTE*) malloc(frames*sizeof(FTE));
 	for (int i = 0; i < frames; i++){
 		frameTable[i].pid = -1;
 		frameTable[i].page = -1;
 		frameTable[i].state = UNUSED;
-		frameTable[i].clean = 1;
-		frameTable[i].referenced = 0;
 	}
 }
 
+/*
+Does a debug print of the frame table
+*/
 void printFrameTable() {
 	USLOSS_Console("\nFrame table:\n");
+
+	//loop through each frame
 	for (int i = 0; i < numFrames; i++) {
 		USLOSS_Console("Index: %d\tPID: %d\tPage: %d\tState: %d\tDirty: %d\tReferenced: %d\n", i, frameTable[i].pid, frameTable[i].page, frameTable[i].state, isDirty(i), isReferenced(i));
 	}
 	USLOSS_Console("\n");
 }
 
+/*
+Does a debug print of the page table for the given process
+*/
 void printPageTable(int pid) {
+	//get the process
 	Process * proc = getProc(pid);
 	PTE * table = proc->pageTable;
 	USLOSS_Console("\nPage table for PID = %d:\n", pid);
+
+	//loop through each page
 	for (int i = 0; i < proc->numPages; ++i) {
 		USLOSS_Console("Index: %d\tState: %d\tFrame: %d\tDiskBlock: %d\n", i, table[i].state, table[i].frame, table[i].diskBlock);
 	}
 	USLOSS_Console("\n");
 }
 
+/*
+Returns a pointer to the p5 process with the given pid
+*/
 Process* getProc(int pid){
 	return &procTable[pid % MAXPROC];
 }
