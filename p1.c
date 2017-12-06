@@ -123,6 +123,24 @@ p1_switch(int old, int new)
     // int    USLOSS_MmuUnmap(int tag, int page)
 } /* p1_switch */
 
+int otherProcsUsingFrame(int myPid, int frame) {
+    for (int i = 11; i < MAXPROC; i++) {
+        if (i == myPid) {
+            continue;
+        }
+        Process * proc = getProc(i);
+        if (proc != NULL && proc->pageTable != NULL) {
+            for (int j = 0; j < proc->numPages; ++j) {
+                if (proc->pageTable[j].frame == frame) {
+                    return 1;
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
 void
 p1_quit(int pid)
 {
@@ -147,7 +165,9 @@ p1_quit(int pid)
                     }
                     //Terminate(1);
                 }
-                vmStats.freeFrames++;
+                if (!otherProcsUsingFrame(pid, me->pageTable[i].frame)) {
+                    vmStats.freeFrames++;
+                }
             }
         }
     }
